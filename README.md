@@ -21,9 +21,11 @@ Each manager is one row: the starting 11 from goalkeeper to forwards, then the b
 
 Automatic substitutions and vice-captain promotion are projected as soon as they're certain, marked ↑ ↓. If the next bench player hasn't played yet, the sub is shown as pending (`sub?`).
 
-**Compare** picks two managers. Players they both own at the same multiplier fade out as "cancelled out". The rest are split into each side's edge (you want these to score) and the other side's edge (you want these to blank), with what's still to play listed first. A one-line summary says who leads and what the trailing manager needs.
+Each row groups the line-up into goalkeeper, defenders, midfielders and forwards, with the formation (e.g. `4-4-2`) next to the manager's name. Players still to play have a dotted outline.
 
-**Show: Unique picks / Shared by 2** fades out every player except those in exactly one (or two) managers' scoring line-ups, so you can see each week's differentials. Each row is tagged with how many it has and the points they've brought in so far.
+**Compare** picks two managers and lines their teams up facing each other on a pitch. A player is crossed off when the other manager has him at the same or a higher multiplier, so he cancels out. If only one of them captains him, he isn't crossed off on that side and is tagged with the net multiplier (e.g. `net ×1`). Below the pitch, each side's edge is listed: players you want to score and players you want to blank, with what's still to play first. A one-line summary says who leads and what the trailing manager needs.
+
+**Only players owned by up to / exactly N managers** fades out everyone else, so you can see each week's differentials. Use up to 1 for unique picks. Each row is tagged with how many such players it has and the points they've brought in so far.
 
 **Standings** shows the season table including this week's live points, with rank movement since last week and a projected total. Use the gameweek arrows to go back through past weeks: both views work for any week this season.
 
@@ -75,5 +77,7 @@ node --test tests/*.test.js
 | `web/demo.js` | Sample gameweek in the FPL API's own response shapes |
 | `serve.py` | Local server and API proxy |
 | `worker/index.js`, `wrangler.jsonc` | Cloudflare Worker: hosts `web/` and proxies the API |
+
+The page sends FPL paths base64url-encoded (`/api/v/…`). Browser content blockers otherwise mistake FPL's `/event/` and `/entry/` addresses for trackers and block them. `/api/_ping` checks that the Worker is up without contacting FPL.
 
 FPL endpoints used: `bootstrap-static/`, `fixtures/?event={gw}`, `event/{gw}/live/`, `leagues-classic/{id}/standings/` (with `leagues-h2h/` as a fallback), `entry/{id}/event/{gw}/picks/`, and `entry/{id}/history/`. For leagues over 50 managers, only the first page of standings is shown.
