@@ -270,33 +270,22 @@
 
   function basisFor(mode, team, p, leagueAvg) {
     if (mode === 'xp') return p.xp / Math.max(1, p.fixtures.length);
-    if (mode === 'own') return team.avg != null ? team.avg : leagueAvg;
-    return leagueAvg;
+    if (mode === 'pace' || mode === 'own') return team.avg != null ? team.avg : leagueAvg;
+    return leagueAvg != null ? leagueAvg : 2;
   }
 
   /**
-   * 'pace': finished players count at their real score; every player not yet
-   * finished (live or to play) scores the manager's average per finished
-   * player, at their multiplier (captain twice). Equals the final score once
-   * everyone has played. Null until someone has finished.
-   * Other modes: points so far + a basis for each match still to come.
+   * Points so far plus a basis for each match still to come, at the player's
+   * multiplier (captain twice); live matches get the share for time left.
+   * Bases: 'pace' (alias 'own') the manager's own average per finished player,
+   * falling back to the league's; 'league' the league average; 'xp' FPL's
+   * expected points. Pace is null until someone in the league has finished.
+   * A finished week projects exactly its score.
    */
   function project(team, mode, leagueAvg) {
-    if (mode === 'pace') {
-      if (team.avg == null) {
-        for (const s of team.counted) s.projected = null;
-        team.pace = null;
-        return null;
-      }
-      let banked = 0, open = 0;
-      for (const s of team.counted) {
-        const finished = s.player.state === 'done' || s.player.state === 'blank';
-        s.projected = finished ? s.player.points : team.avg;
-        if (finished) banked += s.mult * s.player.points;
-        else open += s.mult;
-      }
-      team.pace = { banked, open };
-      return banked + team.avg * open - team.hits;
+    if ((mode === 'pace' || mode === 'own') && team.avg == null && leagueAvg == null) {
+      for (const s of team.counted) s.projected = null;
+      return null;
     }
     let total = -team.hits;
     for (const s of team.counted) {
@@ -313,7 +302,7 @@
         if (s.player.state === 'done' && s.player.minutes > 0) { n++; pts += s.player.points; }
       }
     }
-    return n ? pts / n : 2;
+    return n ? pts / n : null;
   }
 
   function gameweekStatus(fixtures) {
@@ -375,7 +364,8 @@
     });
     const rank = competitionRanks(rows.map((r) => r.total));
     const prev = competitionRanks(rows.map((r) => r.before));
-    rows.forEach((r, i) => { r.rank = rank[i]; r.prevRank = prev[i]; });
+    const proj = competitionRanks(rows.map((r) => r.projTotal));
+    rows.forEach((r, i) => { r.rank = rank[i]; r.prevRank = prev[i]; r.projRank = proj[i]; });
     return rows.sort((a, b) => (a.rank ?? 1e9) - (b.rank ?? 1e9) || b.team.live - a.team.live);
   }
 

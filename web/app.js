@@ -18,7 +18,7 @@
   const settings = {
     league: parseLeague(params.get('league') || '') || store.get('lastLeague', ''),
     apiBase: params.get('api') || store.get('apiBase', './api/'),
-    projection: store.get('basis', 'pace'),
+    projection: store.get('basis', 'pace') === 'own' ? 'pace' : store.get('basis', 'pace'),
     sort: store.get('sort', 'live'),
     get me() { return store.get('me.' + this.league, ''); },
     set me(v) { store.set('me.' + this.league, v); },
@@ -45,9 +45,8 @@
   }
 
   const PROJ_NOTES = {
-    pace: 'Pace: real scores for finished players, plus the manager\'s average for everyone still to finish (captain double).',
+    pace: 'Pace: points so far, plus the manager\'s own average per finished player for each match still to come (captain double, live matches for the time left).',
     league: 'League average: points so far, plus the average of every finished player in this league this week for each match still to come.',
-    own: 'Own average: points so far, plus that manager\'s own average per finished player for each match still to come.',
     xp: 'FPL expected pts: points so far, plus FPL\'s predicted score for each player still to play.',
   };
 
@@ -413,7 +412,7 @@
 
     return `<article class="row${isMe ? ' me' : ''}" id="m-${e.entry}" data-entry="${e.entry}">
       <div class="sum">
-        <div class="who"><span class="rank">${rank}</span><b title="${esc(e.player_name)}">${esc(e.player_name)}</b><small title="${esc(e.entry_name)}">${esc(e.entry_name)}</small><span class="fm" title="Formation">${formation(lines)}</span></div>
+        <div class="who"><span class="rank">${rank}</span><b title="${esc(e.entry_name)}">${esc(e.entry_name)}</b><small title="${esc(e.player_name)}">${esc(e.player_name)}</small><span class="fm" title="Formation">${formation(lines)}</span></div>
         <div class="scoreline">
           <span class="total${t.provisional ? ' prov' : ''}" title="${t.provisional ? 'Includes points not yet final' : 'Live points'}">${t.live}</span>
           <span class="proj" title="${esc(projTitle(t))}">proj <b>${projText(t.projected)}</b></span>
@@ -459,10 +458,10 @@
       const groups = lineGroups(onPitch);
       if (side === 'b') groups.reverse();
       const bench = team.slots.filter((s) => s.bench && !s.subIn);
-      return `<section class="half ${side}" data-entry="${team.entry.entry}" aria-label="${esc(team.entry.player_name)}">
+      return `<section class="half ${side}" data-entry="${team.entry.entry}" aria-label="${esc(team.entry.entry_name)}">
         <header class="half-head">
           <span class="side-tag">${side.toUpperCase()}</span>
-          <b>${esc(team.entry.player_name)}</b>
+          <b>${esc(team.entry.entry_name)}</b><small>${esc(team.entry.player_name)}</small>
           <span class="total${team.provisional ? ' prov' : ''}">${team.live}</span>
           <span class="proj">proj <b>${projText(team.projected)}</b></span>
           <span class="fm">${formation(lineGroups(onPitch))}</span>
@@ -532,7 +531,7 @@
     $('#strip').innerHTML = teams.map((t, i) => `
       <button type="button" data-go="${t.entry.entry}">
         <span class="r">${i + 1}</span>
-        <span class="n">${esc(t.entry.player_name)}</span>
+        <span class="n">${esc(t.entry.entry_name)}</span>
         ${barHtml(t)}
         <span class="t${t.provisional ? ' prov' : ''}">${t.live}</span>
         <span class="pj">→${projText(t.projected)}</span>
@@ -565,7 +564,7 @@
     if (!state.compare || hide) { panel.hidden = true; return ''; }
     panel.hidden = false;
     const teams = state.model.teams;
-    const opt = (sel) => teams.map((t) => `<option value="${t.entry.entry}"${t.entry.entry === sel ? ' selected' : ''}>${esc(t.entry.player_name)}</option>`).join('');
+    const opt = (sel) => teams.map((t) => `<option value="${t.entry.entry}"${t.entry.entry === sel ? ' selected' : ''}>${esc(t.entry.entry_name)}</option>`).join('');
     const head = `<div class="cmp-head">
       <div class="cmp-pick">
         <label class="field" for="cmp-a">A <select id="cmp-a">${opt(state.compare.a)}</select></label>
@@ -579,7 +578,7 @@
     </div>`;
     if (!cmp) { panel.innerHTML = head + '<p class="verdict">Pick two different managers.</p>'; return ''; }
 
-    const an = cmp.a.entry.player_name, bn = cmp.b.entry.player_name;
+    const an = cmp.a.entry.entry_name, bn = cmp.b.entry.entry_name;
     const lead = cmp.liveDiff;
     const leader = lead > 0 ? an : bn, trailer = lead > 0 ? bn : an;
     const remA = cmp.remainingA, remB = cmp.remainingB;
@@ -628,14 +627,14 @@
     return p.dnp ? 'DNP' : `v ${opp} · ${p.minutes}'`;
   }
   function projName() {
-    return { pace: 'current-pace', league: 'league-average', own: 'own-average', xp: 'FPL expected-points' }[settings.projection] + ' basis';
+    return { pace: 'current-pace', league: 'league-average', xp: 'FPL expected-points' }[settings.projection] + ' basis';
   }
   const projText = (v) => (v == null ? '–' : Math.round(v));
   function projTitle(t) {
     if (settings.projection !== 'pace') return 'Projected final score';
-    if (t.avg == null) return 'Pace: shown once a player has finished';
-    const { banked, open } = t.pace;
-    return `Pace: ${banked} from finished players + avg ${fmt1(t.avg)} × ${open} still to finish${t.hits ? ` − ${t.hits} hit` : ''} = ${fmt1(t.projected)}`;
+    if (t.projected == null) return 'Pace: shown once a player has finished';
+    const avg = t.avg != null ? `own average ${fmt1(t.avg)}` : `league average ${fmt1(state.model.leagueAvg)} (none of theirs finished yet)`;
+    return `Pace: ${t.live} so far + ${avg} for each match still to come = ${fmt1(t.projected)}`;
   }
 
   function toggleCompare() {
@@ -698,7 +697,7 @@
       const s = t.slots.find((x) => x.player.id === id);
       if (!s) return null;
       const tag = s.mult >= 3 ? ' (TC)' : s.mult === 2 ? ' (C)' : !s.mult ? ' (bench)' : '';
-      return esc(t.entry.player_name) + tag;
+      return esc(t.entry.entry_name) + tag;
     }).filter(Boolean);
 
     const effMult = mult || 0;
@@ -724,6 +723,8 @@
   });
 
   // ---------- Standings ----------
+  const ordinal = (n) => n + (['th', 'st', 'nd', 'rd'][(n % 100 - 20) % 10] || ['th', 'st', 'nd', 'rd'][n % 100] || 'th');
+
   function renderTable() {
     const m = state.model;
     const rows = FPL.standingsTable(m.teams, state.raw.history, state.gw);
@@ -739,20 +740,21 @@
       <table class="standings">
         <caption>${live ? `Live table, including GW ${state.gw} as it stands` : `Table after GW ${state.gw}`}</caption>
         <thead><tr>
-          <th scope="col">#</th><th scope="col"><span class="sr">Movement</span></th><th scope="col">Manager</th>
+          <th scope="col">#</th><th scope="col"><span class="sr">Movement</span></th><th scope="col">Team</th>
           <th scope="col" class="opt">GW ${state.gw} progress</th><th scope="col" class="num">GW</th>
-          <th scope="col" class="num">Total</th>${live ? '<th scope="col" class="num opt">Projected</th>' : ''}
+          <th scope="col" class="num">Total</th>
         </tr></thead>
         <tbody>${rows.map((r) => {
           const t = r.team, e = t.entry;
           const isMe = String(e.entry) === String(settings.me);
           return `<tr data-go="${e.entry}"${isMe ? ' class="me"' : ''}>
             <td class="rk">${r.rank ?? '–'}</td><td>${move(r)}</td>
-            <td class="mgr"><b>${esc(e.player_name)}</b><small>${esc(e.entry_name)}</small></td>
+            <td class="mgr"><b>${esc(e.entry_name)}</b><small>${esc(e.player_name)}</small></td>
             <td class="opt">${barHtml(t)}</td>
-            <td class="num gwp${t.provisional ? ' prov' : ''}">${t.live}</td>
-            <td class="num tot">${r.total ?? '–'}</td>
-            ${live ? `<td class="num opt" title="Total before this week + projected GW score (${esc(projName())})">${projText(r.projTotal)}</td>` : ''}
+            <td class="num"><span class="gwp${t.provisional ? ' prov' : ''}">${t.live}</span>${live && t.projected != null
+              ? `<small class="pj" title="Projected GW ${state.gw} score (${esc(projName())})">proj ${projText(t.projected)}</small>` : ''}</td>
+            <td class="num"><span class="tot">${r.total ?? '–'}</span>${live && r.projTotal != null
+              ? `<small class="pj" title="Total before this week + projected GW score (${esc(projName())})">proj ${projText(r.projTotal)} · ${ordinal(r.projRank)}</small>` : ''}</td>
           </tr>`;
         }).join('')}</tbody>
       </table>
@@ -782,7 +784,7 @@
     $('#set-api').value = settings.apiBase;
     const teams = state.model ? state.model.teams : [];
     $('#set-me').innerHTML = '<option value="">None</option>' +
-      teams.map((t) => `<option value="${t.entry.entry}"${String(t.entry.entry) === String(settings.me) ? ' selected' : ''}>${esc(t.entry.player_name)} · ${esc(t.entry.entry_name)}</option>`).join('');
+      teams.map((t) => `<option value="${t.entry.entry}"${String(t.entry.entry) === String(settings.me) ? ' selected' : ''}>${esc(t.entry.entry_name)} · ${esc(t.entry.player_name)}</option>`).join('');
     const dlg = $('#settings-dlg');
     if (dlg.showModal) dlg.showModal(); else dlg.setAttribute('open', '');
   }

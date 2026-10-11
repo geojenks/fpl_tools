@@ -108,7 +108,7 @@ test('compare cancels shared players and keeps captaincy differences', () => {
   assert.equal(banked - c.a.hits + c.b.hits, c.liveDiff);
 });
 
-test('pace keeps finished scores and gives the average to everyone still to finish', () => {
+test('pace adds the manager average for each match still to come', () => {
   const m = FPL.buildLeague(world());
   const t = m.teams[0];
   // 8 finished: P1 (C) 2+3 bonus, P2 2+2 bonus, six on 2 → avg 21/8, banked 5×2 + 4 + 12.

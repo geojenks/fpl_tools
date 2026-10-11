@@ -261,6 +261,7 @@ select, input {
 .half-head { display: flex; align-items: baseline; flex-wrap: wrap; gap: 0.2rem 0.55rem; }
 .half.b .half-head { justify-content: flex-end; }
 .half-head b { font: 700 1.15rem var(--font-display); }
+.half-head small { color: var(--muted); }
 .half-head .fm { margin-left: 0; }
 .side-tag { font: 700 0.72rem/1.4 var(--font-body); padding: 0 0.35rem; border-radius: 4px; color: var(--surface); }
 .half.a .side-tag { background: var(--edge-a); }
@@ -343,6 +344,7 @@ select, input {
 .standings .mgr small { color: var(--muted); }
 .standings td.opt { width: 14rem; }
 .standings .gwp { font: 700 1.25rem var(--font-display); }
+.standings .pj { display: block; color: var(--muted); font-size: 0.75rem; white-space: nowrap; }
 .standings .gwp.prov { text-decoration: underline dotted var(--prov); text-underline-offset: 3px; }
 .standings .tot { font: 700 1.4rem var(--font-display); }
 .mv { font-size: 0.75rem; font-weight: 600; color: var(--muted); white-space: nowrap; }
