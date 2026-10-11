@@ -53,10 +53,11 @@
     return [...(stat.h || []), ...(stat.a || [])];
   }
 
-  function explainHasBonus(live, fixtureId) {
-    if (!live || !live.explain) return false;
+  /** Bonus points FPL's own live data lists for a player in one fixture. */
+  function apiBonus(live, fixtureId) {
+    if (!live || !live.explain) return 0;
     const fx = live.explain.find((x) => x.fixture === fixtureId);
-    return !!(fx && fx.stats.some((s) => s.identifier === 'bonus' && s.points > 0));
+    return fx ? fx.stats.filter((s) => s.identifier === 'bonus').reduce((a, s) => a + (s.points || 0), 0) : 0;
   }
 
   /** Build lookups and a per-player live view for one gameweek. */
@@ -76,14 +77,25 @@
       list.sort((a, b) => String(a.kickoff_time).localeCompare(String(b.kickoff_time)));
     }
 
-    // Provisional bonus for fixtures that have started but are not confirmed.
+    // Fixtures where FPL's live data already carries bonus points. It may add
+    // them provisionally during a match; there we use FPL's numbers (they're
+    // already inside total_points). Elsewhere we work them out from BPS.
+    const fplBonusFixtures = new Set();
+    for (const e of live.elements || []) {
+      for (const x of e.explain || []) {
+        if ((x.stats || []).some((s) => s.identifier === 'bonus' && s.points > 0)) fplBonusFixtures.add(x.fixture);
+      }
+    }
+
     const provBonus = new Map();
     const bpsByFixture = new Map();
+    const bpsRows = new Map();
     for (const f of fixtures) {
       if (!f.started) continue;
       const bps = fixtureBps(f);
+      bpsRows.set(f.id, bps);
       bpsByFixture.set(f.id, new Map(bps.map((b) => [b.element, b.value])));
-      if (!f.finished) provBonus.set(f.id, bonusFromBps(bps));
+      provBonus.set(f.id, bonusFromBps(bps));
     }
 
     const cache = new Map();
@@ -94,14 +106,23 @@
       const stats = (lv && lv.stats) || {};
       const minutes = stats.minutes || 0;
       const basePoints = stats.total_points || 0;
-      let bonusProv = 0;
+      let bonusProv = 0; // provisional bonus this player holds right now (shown as +Nb?)
+      let bonusAdded = 0; // the part of it we add on top of FPL's total_points
 
       const fx = (fixturesByTeam.get(el.team) || []).map((f) => {
         const home = f.team_h === el.team;
         const done = fixtureDone(f);
-        const bonusConfirmed = !!f.finished || explainHasBonus(lv, f.id);
-        const pb = f.started && !bonusConfirmed ? (provBonus.get(f.id) || new Map()).get(id) || 0 : 0;
-        bonusProv += pb;
+        const bonusConfirmed = !!f.finished;
+        const fromFpl = bonusConfirmed || fplBonusFixtures.has(f.id);
+        let pb = 0;
+        if (f.started && !bonusConfirmed) {
+          if (fromFpl) pb = apiBonus(lv, f.id);
+          else {
+            pb = (provBonus.get(f.id) || new Map()).get(id) || 0;
+            bonusAdded += pb;
+          }
+          bonusProv += pb;
+        }
         const bpsMap = bpsByFixture.get(f.id);
         return {
           id: f.id,
@@ -135,7 +156,8 @@
         minutes,
         basePoints,
         bonusProv,
-        points: basePoints + bonusProv,
+        bonusAdded,
+        points: basePoints + bonusAdded,
         state,
         // Definitely won't score this GW: blank, or every fixture over with no minutes.
         dnp: state === 'blank' || (state === 'done' && minutes === 0),
@@ -148,7 +170,35 @@
       return p;
     }
 
-    return { player, elements, teams };
+    /**
+     * Live BPS ranking for a fixture: everyone holding a bonus place plus the
+     * next two, and `forId`'s own standing. Null if the match hasn't started.
+     */
+    function bpsTable(fixtureId, forId) {
+      const rows = bpsRows.get(fixtureId);
+      if (!rows || !rows.length) return null;
+      const bonus = bonusFromBps(rows);
+      const ranked = rows
+        .filter((r) => r.value > 0)
+        .sort((a, b) => b.value - a.value)
+        .map((r) => ({
+          player: player(r.element),
+          value: r.value,
+          rank: 1 + rows.filter((o) => o.value > r.value).length,
+          bonus: bonus.get(r.element) || 0,
+        }));
+      const holders = ranked.filter((r) => r.rank <= 3);
+      const cutoff = holders.length ? holders[holders.length - 1].value : 0;
+      const self = ranked.find((r) => r.player.id === forId) || null;
+      return {
+        rows: holders.concat(ranked.filter((r) => r.rank > 3).slice(0, 2)),
+        self,
+        cutoff,
+        gap: self && !self.bonus ? cutoff - self.value : 0,
+      };
+    }
+
+    return { player, elements, teams, bpsTable };
   }
 
   const isGk = (p) => p.pos === 1;

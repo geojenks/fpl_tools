@@ -155,3 +155,33 @@ test('ownership filter: up to n includes unique picks, exactly n does not', () =
   assert.equal(FPL.ownedMatch(1, 2, false), false);
   assert.equal(FPL.ownedMatch(undefined, 6, true), false);
 });
+
+test('bonus already in FPL live data is used as is, never added twice', () => {
+  // FPL lists a provisional +3 for player 1 (already inside total_points) while the match isn't confirmed.
+  const w = world();
+  w.live.elements[0].stats.total_points = 5;
+  w.live.elements[0].explain = [{ fixture: 1, stats: [{ identifier: 'bonus', value: 3, points: 3 }] }];
+  const m = FPL.buildLeague(w);
+  const p1 = m.players.player(1);
+  assert.equal(p1.points, 5);
+  assert.equal(p1.bonusProv, 3); // shown as +3b?
+  assert.equal(p1.bonusAdded, 0);
+  assert.equal(p1.provisional, true);
+  // Player 2 is in the same match: no per-player "confirmed" shortcut, and we don't invent bonus on top of FPL's.
+  const p2 = m.players.player(2);
+  assert.equal(p2.bonusProv, 0);
+  assert.equal(p2.points, 2);
+  assert.equal(p2.provisional, true);
+});
+
+test('bonus race table ranks BPS and reports the gap to a bonus place', () => {
+  const w = world();
+  w.fixtures[0].stats = [{ identifier: 'bps', h: [{ element: 1, value: 40 }, { element: 2, value: 30 }, { element: 3, value: 25 }], a: [{ element: 9, value: 20 }, { element: 10, value: 18 }] }];
+  const players = FPL.buildPlayers({ bootstrap: w.bootstrap, fixtures: w.fixtures, live: w.live });
+  const t = players.bpsTable(1, 9);
+  assert.deepEqual(t.rows.map((r) => [r.player.id, r.rank, r.bonus]), [[1, 1, 3], [2, 2, 2], [3, 3, 1], [9, 4, 0], [10, 5, 0]]);
+  assert.equal(t.self.rank, 4);
+  assert.equal(t.cutoff, 25);
+  assert.equal(t.gap, 5);
+  assert.equal(players.bpsTable(2, 1), null); // match not started
+});

@@ -406,7 +406,7 @@
       tags.push(`<span class="tag chip" title="${esc(long)} played">${esc(short)}</span>`);
     }
     if (t.hits) tags.push(`<span class="tag hit" title="Transfer hit, already taken off">−${t.hits}</span>`);
-    if (t.provBonus) tags.push(`<span class="tag provb" title="Includes ${t.provBonus} provisional bonus worked out from live BPS; may change">+${t.provBonus} bonus?</span>`);
+    if (t.provBonus) tags.push(`<span class="tag provb" title="Includes ${t.provBonus} bonus point${t.provBonus === 1 ? '' : 's'} that FPL hasn't confirmed yet (live BPS). It can change until full time.">+${t.provBonus} bonus?</span>`);
     if (state.own.on) tags.unshift(ownTag(t));
     const lines = lineGroups(t.slots.filter((s) => !s.bench));
 
@@ -509,8 +509,7 @@
       else meta = `${p.minutes}'`;
       if (p.state === 'upcoming' && next) meta += ` · ${esc(next.opponent ? next.opponent.short_name : '')} next`;
       if (s.subPending) meta = 'DNP · sub?';
-      if (p.bonusProv) meta += ` <span class="prov-mark">+${p.bonusProv}b?</span>`;
-      else if (p.provisional && p.state === 'done' && !p.dnp) meta += ' <span class="prov-mark">b?</span>';
+      if (p.bonusProv) meta += ` <span class="prov-mark" title="Bonus not confirmed yet">+${p.bonusProv}b?</span>`;
     }
 
     let badge = '';
@@ -665,6 +664,21 @@
     if (card) openPlayer(+card.dataset.el, +card.dataset.mult, card.closest('[data-entry]').dataset.entry);
   });
 
+  /** Live BPS ranking for a match: who holds the 3/2/1 bonus places right now. */
+  function bonusRaceHtml(t, id) {
+    if (!t || !t.rows.length) return '<div class="bw"><p>No BPS recorded for this match yet.</p></div>';
+    const line = (r) => `<tr${r.player.id === id ? ' class="self"' : ''}><td class="r">${r.rank}</td>` +
+      `<td>${esc(r.player.name)} <small>${esc(r.player.team.short_name)}</small></td><td class="n">${r.value}</td>` +
+      `<td class="b">${r.bonus ? '+' + r.bonus : ''}</td></tr>`;
+    const rows = t.rows.map(line);
+    if (t.self && !t.rows.some((r) => r.player.id === id)) rows.push('<tr class="gap"><td colspan="4">…</td></tr>', line(t.self));
+    const verdict = !t.self ? 'No BPS recorded for him yet.'
+      : t.self.bonus ? `Holding +${t.self.bonus} bonus right now.`
+        : `${t.gap} BPS behind the last bonus place.`;
+    return `<div class="bw"><h4>Bonus race · live BPS</h4><table>${rows.join('')}</table>
+      <p>${verdict} The top three BPS in the match get 3, 2 and 1 bonus points. It can change until full time, and FPL confirms it after the match.</p></div>`;
+  }
+
   function openPlayer(id, mult, entryId) {
     const m = state.model;
     const p = m.players.player(id);
@@ -684,13 +698,21 @@
       else if (f.live) st = `<span class="st live">Live ${f.elapsed}'</span>`;
       else if (!f.bonusConfirmed) st = '<span class="st prov">Finished · bonus not confirmed</span>';
       else st = '<span class="st">Final</span>';
-      const rows = ((f.explain && f.explain.stats) || [])
+      const stats = (f.explain && f.explain.stats) || [];
+      const provisional = f.started && !f.bonusConfirmed;
+      const fplBonus = stats.some((x) => x.identifier === 'bonus' && x.points);
+      const rows = stats
         .filter((x) => x.points || x.identifier === 'minutes')
-        .map((x) => `<tr><td>${esc(FPL.statLabel(x.identifier))}</td><td>${x.value}</td><td>${x.points > 0 ? '+' : ''}${x.points}</td></tr>`);
-      if (f.provBonus) rows.push(`<tr class="provrow"><td>Bonus (provisional)</td><td>BPS ${f.bps}</td><td>+${f.provBonus}</td></tr>`);
-      else if (f.started && !f.bonusConfirmed && f.bps != null) rows.push(`<tr class="provrow"><td>Bonus (provisional)</td><td>BPS ${f.bps}</td><td>0</td></tr>`);
+        .map((x) => {
+          const prov = provisional && x.identifier === 'bonus';
+          return `<tr${prov ? ' class="provrow"' : ''}><td>${prov ? 'Bonus (provisional)' : esc(FPL.statLabel(x.identifier))}</td><td>${x.value}</td><td>${x.points > 0 ? '+' : ''}${x.points}</td></tr>`;
+        });
+      if (provisional && !fplBonus && f.bps != null) {
+        rows.push(`<tr class="provrow"><td>Bonus (provisional)</td><td>BPS ${f.bps}</td><td>${f.provBonus ? '+' + f.provBonus : '0'}</td></tr>`);
+      }
       const body = f.started ? (rows.length ? `<table>${rows.join('')}</table>` : '<p class="owners">No points yet.</p>') : '';
-      return `<div class="fx"><h3>${esc(scoreline)} ${st}</h3>${body}</div>`;
+      const race = provisional ? bonusRaceHtml(m.players.bpsTable(f.id, id), id) : '';
+      return `<div class="fx"><h3>${esc(scoreline)} ${st}</h3>${body}${race}</div>`;
     }).join('') || '<div class="fx"><p class="owners">No match this gameweek.</p></div>';
 
     const owners = m.teams.map((t) => {

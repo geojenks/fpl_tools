@@ -399,6 +399,19 @@ select, input {
 .fx td:nth-child(2) { color: var(--muted); text-align: right; padding-right: 1rem; }
 .fx td:last-child { text-align: right; font-weight: 600; width: 3.5rem; }
 .fx tr.provrow td { color: var(--prov); }
+.bw { margin-top: 0.6rem; background: var(--surface-2); border-radius: 6px; padding: 0.45rem 0.6rem; }
+.bw h4 { margin: 0 0 0.25rem; font: 700 0.72rem var(--font-body); text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); }
+.bw table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+.bw td { padding: 0.15rem 0.2rem; border-bottom: 1px dotted var(--line); }
+.bw tr:last-child td { border-bottom: 0; }
+.fx .bw td:nth-child(2) { text-align: left; color: var(--ink); padding-right: 0; }
+.bw td.r { width: 1.4rem; color: var(--muted); }
+.bw td small { color: var(--muted); margin-left: 0.2rem; }
+.bw td.n { text-align: right; width: 3rem; }
+.bw td.b { text-align: right; width: 2.2rem; font-weight: 700; color: var(--prov); }
+.bw tr.self td { font-weight: 700; background: var(--surface); }
+.bw tr.gap td { text-align: center; color: var(--muted); }
+.bw p { margin: 0.35rem 0 0; color: var(--muted); font-size: 0.8rem; }
 .pd-total { display: flex; justify-content: space-between; align-items: baseline; border-top: 2px solid var(--ink); padding-top: 0.5rem; }
 .pd-total b { font: 700 1.8rem var(--font-display); }
 .owners { color: var(--muted); font-size: 0.85rem; margin: 0; }

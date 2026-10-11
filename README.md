@@ -14,7 +14,9 @@ The official app shows one team at a time and a single total, which is misleadin
   - **FPL expected pts**: FPL's predicted score for each player.
 - A progress bar of the 11 (15 with Bench Boost) counting players: green finished, amber live, hatched yet to play, red didn't play.
 
-Each manager is one row: the starting 11 from goalkeeper to forwards, then the bench. Click a player to see where their points came from, match by match, including provisional bonus with their BPS.
+Each manager is one row: the starting 11 from goalkeeper to forwards, then the bench. Click a player to see where their points came from, match by match. For a match whose bonus isn't confirmed yet, a **bonus race** table shows the live BPS ranking: who holds the 3, 2 and 1 bonus points right now, and how many BPS a player is short of a bonus place.
+
+Bonus is taken from FPL's own live data when it already lists it for the match (FPL may add it provisionally during play), and worked out from the match's BPS ranking when it doesn't. Either way it is never counted twice, and it is marked `+3b?` until the match's bonus is confirmed.
 
 Automatic substitutions and vice-captain promotion are projected as soon as they're certain, marked ↑ ↓. If the next bench player hasn't played yet, the sub is shown as pending (`sub?`).
 
