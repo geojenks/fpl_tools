@@ -107,3 +107,13 @@ test('compare cancels shared players and keeps captaincy differences', () => {
   const banked = [...c.edgeA, ...c.edgeB].reduce((a, r) => a + r.banked, 0);
   assert.equal(banked - c.a.hits + c.b.hits, c.liveDiff);
 });
+
+test('pace projects the average per finished player across all slots, captain twice', () => {
+  const m = FPL.buildLeague(world());
+  const t = m.teams[0];
+  // 8 finished: seven on 2, captain (P1) on 2 + 3 bonus → avg 21/8.
+  assert.equal(t.avg, 21 / 8);
+  assert.equal(t.projected, (21 / 8) * 12);
+  const tc = FPL.buildLeague(world({ chip: '3xc' })).teams[0];
+  assert.equal(tc.projected, (21 / 8) * 13);
+});

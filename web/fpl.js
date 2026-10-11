@@ -274,7 +274,25 @@
     return leagueAvg;
   }
 
+  /**
+   * 'pace': every counting slot scores the manager's average per finished
+   * player, captain counted at their multiplier — avg × 12 for a normal week
+   * (13 with Triple Captain, 16 with Bench Boost), minus hits. Null until
+   * someone has finished. Other modes: points so far + basis per match to come.
+   */
   function project(team, mode, leagueAvg) {
+    if (mode === 'pace') {
+      if (team.avg == null) {
+        for (const s of team.counted) s.projected = null;
+        return null;
+      }
+      let slots = 0;
+      for (const s of team.counted) {
+        s.projected = s.player.state === 'done' || s.player.state === 'blank' ? s.player.points : team.avg;
+        slots += s.mult;
+      }
+      return team.avg * slots - team.hits;
+    }
     let total = -team.hits;
     for (const s of team.counted) {
       s.projected = projectPlayer(s.player, basisFor(mode, team, s.player, leagueAvg));
@@ -303,7 +321,7 @@
   }
 
   /** Whole-league model for one gameweek. */
-  function buildLeague({ bootstrap, fixtures, live, standings, picksByEntry, projection = 'league' }) {
+  function buildLeague({ bootstrap, fixtures, live, standings, picksByEntry, projection = 'pace' }) {
     const players = buildPlayers({ bootstrap, fixtures, live });
     const teams = standings
       .filter((e) => picksByEntry[e.entry])
@@ -339,7 +357,7 @@
     return {
       a, b, edgeA, edgeB, shared,
       liveDiff: a.live - b.live,
-      projDiff: a.projected - b.projected,
+      projDiff: a.projected != null && b.projected != null ? a.projected - b.projected : null,
       sharedPoints: shared.reduce((acc, r) => acc + r.a * r.player.points, 0),
       remainingA: edgeA.filter((r) => r.player.state === 'live' || r.player.state === 'upcoming'),
       remainingB: edgeB.filter((r) => r.player.state === 'live' || r.player.state === 'upcoming'),

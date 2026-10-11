@@ -18,7 +18,7 @@
     league: params.get('league') || store.get('league', '246924'),
     apiBase: params.get('api') || store.get('apiBase', './api/'),
     me: store.get('me', ''),
-    projection: store.get('projection', 'league'),
+    projection: store.get('basis', 'pace'),
     sort: store.get('sort', 'live'),
   };
   const state = {
@@ -186,7 +186,7 @@
     const key = settings.sort;
     const by = {
       live: (t) => -t.live,
-      projected: (t) => -t.projected,
+      projected: (t) => -(t.projected ?? -999),
       avg: (t) => -(t.avg ?? -1),
       rank: (t) => t.entry.rank,
     }[key];
@@ -264,7 +264,7 @@
         <div class="who"><span class="rank">${rank}</span><b title="${esc(e.player_name)}">${esc(e.player_name)}</b><small title="${esc(e.entry_name)}">${esc(e.entry_name)}</small></div>
         <div class="scoreline">
           <span class="total${t.provisional ? ' prov' : ''}" title="${t.provisional ? 'Includes points not yet final' : 'Live points'}">${t.live}</span>
-          <span class="proj" title="Projected final score">proj <b>${Math.round(t.projected)}</b></span>
+          <span class="proj" title="${esc(projTitle(t))}">proj <b>${projText(t.projected)}</b></span>
           ${tags.length ? `<span class="tags">${tags.join('')}</span>` : ''}
         </div>
         ${barHtml(t)}
@@ -348,7 +348,7 @@
         <span class="n">${esc(t.entry.player_name)}</span>
         ${barHtml(t)}
         <span class="t${t.provisional ? ' prov' : ''}">${t.live}</span>
-        <span class="pj">→${Math.round(t.projected)}</span>
+        <span class="pj">→${projText(t.projected)}</span>
       </button>`).join('');
   }
   $('#strip').addEventListener('click', (e) => {
@@ -386,7 +386,7 @@
         <label class="field" for="cmp-b">B <select id="cmp-b">${opt(state.compare.b)}</select></label>
       </div>
       ${cmp ? `<div class="versus"><span class="n a">${cmp.a.live}</span><span>–</span><span class="n b">${cmp.b.live}</span>
-        <span class="proj">proj <b>${Math.round(cmp.a.projected)}</b> – <b>${Math.round(cmp.b.projected)}</b></span></div>` : ''}
+        <span class="proj">proj <b>${projText(cmp.a.projected)}</b> – <b>${projText(cmp.b.projected)}</b></span></div>` : ''}
       <span class="spacer"></span>
       <button type="button" class="btn ghost" id="cmp-close">Close compare</button>
     </div>`;
@@ -406,7 +406,8 @@
     const remaining = `${esc(an)} has ${remA.length} differential${remA.length === 1 ? '' : 's'} playing or still to play${capNote(remA)}; ` +
       `${esc(bn)} has ${remB.length}${capNote(remB)}. `;
     const need = lead === 0 ? '' : `${esc(trailer)} needs their remaining differentials to outscore ${esc(leader)}'s by ${Math.abs(lead) + 1}+ to go ahead. `;
-    const projLine = `On ${projName()} the projection is ${esc(cmp.projDiff >= 0 ? an : bn)} by ${fmt1(Math.abs(cmp.projDiff))}.`;
+    const projLine = cmp.projDiff == null ? ''
+      : `On ${projName()} the projection is ${esc(cmp.projDiff >= 0 ? an : bn)} by ${fmt1(Math.abs(cmp.projDiff))}.`;
 
     const li = (r, mult) => `<li><span class="dot ${r.player.dnp ? 'dnp' : r.player.state}"></span>
       <span class="nm2">${esc(r.player.name)}<small>${esc(fixtureShort(r.player))}</small></span>
@@ -441,7 +442,14 @@
     return p.dnp ? 'DNP' : `v ${opp} · ${p.minutes}'`;
   }
   function projName() {
-    return { league: 'league-average', own: 'own-average', xp: 'FPL expected-points' }[settings.projection] + ' basis';
+    return { pace: 'current-pace', league: 'league-average', own: 'own-average', xp: 'FPL expected-points' }[settings.projection] + ' basis';
+  }
+  const projText = (v) => (v == null ? '–' : Math.round(v));
+  function projTitle(t) {
+    if (settings.projection !== 'pace') return 'Projected final score';
+    if (t.avg == null) return 'Pace: shown once a player has finished';
+    const slots = t.counted.reduce((a, s) => a + s.mult, 0);
+    return `Pace: avg ${fmt1(t.avg)} × ${slots}${t.hits ? ` − ${t.hits} hit` : ''} = ${fmt1(t.projected)}`;
   }
 
   function toggleCompare() {
@@ -568,7 +576,7 @@
   // ---------- Controls ----------
   $('#projection').addEventListener('change', (e) => {
     settings.projection = e.target.value;
-    store.set('projection', settings.projection);
+    store.set('basis', settings.projection);
     rebuild();
   });
   $('#sort').addEventListener('change', (e) => {

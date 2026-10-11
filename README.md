@@ -8,7 +8,7 @@ The official app shows one team at a time and a single total, which is misleadin
 - **Done / avg**: players finished, and average points per player who played.
 - **Live**: players in a match right now, and what they've scored.
 - **To play**: players yet to start. `(C)` means the captain is among them.
-- **Projected** final score: points so far plus a basis for each match still to come. A captain counts at their multiplier, and live matches are scaled by the time left. You can pick the basis: league average, the manager's own average, or FPL's expected points.
+- **Projected** final score. By default this is **Pace**: the average per finished player, as if all 11 scored it, with the captain counted twice. That's avg × 12 (×13 with Triple Captain, ×16 with Bench Boost), minus hits. The alternatives take points so far and add a league average, the manager's own average or FPL's expected points for each match still to come, with live matches scaled by the time left.
 - A progress bar of the 11 (15 with Bench Boost) counting players: green finished, amber live, hatched yet to play, red didn't play.
 
 Each manager is one row: the starting 11 from goalkeeper to forwards, then the bench. Click a player to see where their points came from, match by match, including provisional bonus with their BPS.
