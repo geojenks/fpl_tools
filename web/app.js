@@ -79,7 +79,13 @@
     return {
       demo: false,
       async get(path) {
-        const r = await fetch(root + path, { cache: 'no-store' });
+        let r;
+        try {
+          r = await fetch(root + path, { cache: 'no-store', signal: AbortSignal.timeout ? AbortSignal.timeout(30000) : undefined });
+        } catch (err) {
+          if (err.name === 'TimeoutError') throw new Error(`no answer after 30 seconds, for ${path}`);
+          throw new Error(`${err.message}, for ${path}`);
+        }
         if (!r.ok) {
           let detail = '';
           try { detail = (await r.json()).error || ''; } catch { /* not JSON */ }

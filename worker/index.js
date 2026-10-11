@@ -21,10 +21,13 @@ async function proxy(request, url) {
   // Read the whole body here so a dropped upstream connection becomes a
   // clear 502 instead of a broken stream (a browser "NetworkError").
   try {
+    const started = Date.now();
     const upstream = await fetch(UPSTREAM + url.pathname + url.search, {
       headers: { 'User-Agent': 'Mozilla/5.0 (fpl_tools live viewer)', Accept: 'application/json' },
       cf: { cacheTtl: live ? 30 : 120, cacheEverything: true },
+      signal: AbortSignal.timeout(20000),
     });
+    console.log(`FPL ${upstream.status} for ${url.pathname} in ${Date.now() - started}ms`);
     const body = await upstream.arrayBuffer();
     if (!upstream.ok) {
       console.error(`FPL ${upstream.status} for ${url.pathname}`);
@@ -33,14 +36,21 @@ async function proxy(request, url) {
     }
     return new Response(body, { status: 200, headers });
   } catch (err) {
-    console.error(`FPL fetch failed for ${url.pathname}: ${err.message}`);
-    return new Response(JSON.stringify({ error: `FPL unreachable: ${err.message}` }), { status: 502, headers });
+    console.error(`FPL fetch failed for ${url.pathname}: ${err.name} ${err.message}`);
+    const why = err.name === 'TimeoutError' ? 'FPL took more than 20 seconds to answer' : `FPL unreachable: ${err.message}`;
+    return new Response(JSON.stringify({ error: why }), { status: err.name === 'TimeoutError' ? 504 : 502, headers });
   }
 }
 
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
+    // Health check that doesn't touch FPL: shows the Worker itself is answering.
+    if (url.pathname === '/api/_ping') {
+      return new Response(JSON.stringify({ ok: true, worker: 'fpl-tools', time: new Date().toISOString() }), {
+        headers: { ...CORS, 'Content-Type': 'application/json', 'Cache-Control': 'no-store' },
+      });
+    }
     if (url.pathname.startsWith('/api/')) return proxy(request, url);
     return env.ASSETS.fetch(request);
   },
