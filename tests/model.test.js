@@ -108,12 +108,42 @@ test('compare cancels shared players and keeps captaincy differences', () => {
   assert.equal(banked - c.a.hits + c.b.hits, c.liveDiff);
 });
 
-test('pace projects the average per finished player across all slots, captain twice', () => {
+test('pace keeps finished scores and gives the average to everyone still to finish', () => {
   const m = FPL.buildLeague(world());
   const t = m.teams[0];
-  // 8 finished: seven on 2, captain (P1) on 2 + 3 bonus → avg 21/8.
+  // 8 finished: P1 (C) 2+3 bonus, P2 2+2 bonus, six on 2 → avg 21/8, banked 5×2 + 4 + 12.
   assert.equal(t.avg, 21 / 8);
-  assert.equal(t.projected, (21 / 8) * 12);
-  const tc = FPL.buildLeague(world({ chip: '3xc' })).teams[0];
-  assert.equal(tc.projected, (21 / 8) * 13);
+  assert.equal(t.projected, 26 + (21 / 8) * 3);
+  // A finished week projects exactly its score.
+  const d = Demo.make(5);
+  const past = FPL.buildLeague({ bootstrap: d.bootstrap, fixtures: d.fixtures, live: d.live, standings: d.league.standings.results, picksByEntry: d.picks });
+  for (const team of past.teams) assert.equal(team.projected, team.live);
+});
+
+test('ownership counts managers with the player in their scoring line-up', () => {
+  const d = Demo.make();
+  const m = FPL.buildLeague({ bootstrap: d.bootstrap, fixtures: d.fixtures, live: d.live, standings: d.league.standings.results, picksByEntry: d.picks });
+  const id = (n) => d.bootstrap.elements.find((e) => e.web_name === n).id;
+  assert.equal(m.ownership.get(id('Haaland')), 6);
+  assert.equal(m.ownership.get(id('Wood')), 1);
+  const alex = m.teams.find((t) => t.entry.player_name === 'Alex Harper');
+  assert.ok(FPL.ownedBy(alex, m.ownership, 1).count >= 1);
+});
+
+test('standings add live week points to the total before the week', () => {
+  const d = Demo.make();
+  const m = FPL.buildLeague({ bootstrap: d.bootstrap, fixtures: d.fixtures, live: d.live, standings: d.league.standings.results, picksByEntry: d.picks });
+  const rows = FPL.standingsTable(m.teams, d.history, d.gw);
+  for (const r of rows) {
+    const hist = d.history[r.team.entry.entry].current;
+    assert.equal(r.before, hist[hist.length - 1].total_points);
+    assert.equal(r.total, r.before + r.team.live);
+  }
+  assert.deepEqual(rows.map((r) => r.total), rows.map((r) => r.total).slice().sort((a, b) => b - a));
+  assert.equal(rows[0].rank, 1);
+});
+
+test('past sample weeks are complete', () => {
+  const d = Demo.make(5);
+  assert.ok(d.fixtures.every((f) => f.finished));
 });

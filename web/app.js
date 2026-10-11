@@ -14,22 +14,41 @@
   let params;
   try { params = new URLSearchParams(location.search); } catch { params = new URLSearchParams(); }
 
+  // The league comes from the link (?league=), else the last one opened here.
   const settings = {
-    league: params.get('league') || store.get('league', '246924'),
+    league: parseLeague(params.get('league') || '') || store.get('lastLeague', ''),
     apiBase: params.get('api') || store.get('apiBase', './api/'),
-    me: store.get('me', ''),
     projection: store.get('basis', 'pace'),
     sort: store.get('sort', 'live'),
+    get me() { return store.get('me.' + this.league, ''); },
+    set me(v) { store.set('me.' + this.league, v); },
   };
+  const emptyRaw = () => ({ bootstrap: null, standings: null, leagueName: '', picks: {}, history: {}, gw: null });
   const state = {
     demo: params.has('demo') || !!window.FPL_FORCE_DEMO,
-    raw: { bootstrap: null, standings: null, leagueName: '', picks: {}, gw: null },
+    raw: emptyRaw(),
     model: null,
     gw: params.get('gw') ? +params.get('gw') : null,
+    view: params.get('view') === 'table' ? 'table' : 'week',
+    show: 'all', // 'all' | '1' | '2': fade players not owned by exactly that many managers
     compare: null, // { a: entryId, b: entryId }
     updatedAt: null,
     timer: null,
     loading: false,
+  };
+
+  /** Accept a bare ID or any FPL league link. */
+  function parseLeague(text) {
+    const t = String(text).trim();
+    const m = t.match(/leagues\/(?:[a-z-]+\/)?(\d+)/i) || t.match(/^(\d{1,9})$/);
+    return m ? m[1] : '';
+  }
+
+  const PROJ_NOTES = {
+    pace: 'Pace: finished players at their real score, plus the manager\'s average per finished player for everyone still to finish (captain counts double).',
+    league: 'League average: points so far, plus the average of every finished player in this league this week for each match still to come.',
+    own: 'Own average: points so far, plus that manager\'s own average per finished player for each match still to come.',
+    xp: 'FPL expected pts: points so far, plus FPL\'s predicted score for each player still to play.',
   };
 
   // ---------- Team kit colours ----------
@@ -80,6 +99,7 @@
   }
 
   async function load({ full = false } = {}) {
+    if (!state.demo && !settings.league) { renderWelcome(); return; }
     if (state.loading) return;
     state.loading = true;
     $('#refresh-btn').disabled = true;
@@ -103,29 +123,38 @@
       if (raw.gw !== gw) { raw.picks = {}; raw.gw = gw; }
 
       const missing = raw.standings.filter((e) => !raw.picks[e.entry]);
+      const noHistory = raw.standings.filter((e) => !(e.entry in raw.history));
       const [fixtures, live] = await Promise.all([
         source.get(`fixtures/?event=${gw}`),
         source.get(`event/${gw}/live/`),
         ...missing.map((e) => source.get(`entry/${e.entry}/event/${gw}/picks/`)
           .then((p) => { raw.picks[e.entry] = p; })
           .catch((err) => { if (!(err instanceof HttpError && err.status === 404)) throw err; })),
+        ...noHistory.map((e) => source.get(`entry/${e.entry}/history/`)
+          .then((h) => { raw.history[e.entry] = h; })
+          .catch(() => { raw.history[e.entry] = null; })),
       ]);
       raw.fixtures = fixtures;
       raw.live = live;
       state.updatedAt = new Date();
+      if (!state.demo) store.set('lastLeague', settings.league);
+      updateUrl();
       rebuild();
       clearBanner();
       if (source.demo) {
-        showBanner(window.FPL_DEMO_NOTE || 'Sample data: made-up scores to show the layout. Open Settings to connect your league.', false, !window.FPL_DEMO_NOTE);
+        showBanner(window.FPL_DEMO_NOTE || 'Sample data: made-up managers and scores. Enter your league ID or link in the search box to see yours.', false, false);
       }
       schedule();
     } catch (err) {
       console.error(err);
       const where = source.demo ? 'sample data' : settings.apiBase;
-      showBanner(
-        `Couldn't load league ${esc(settings.league)} from ${esc(where)} (${esc(err.message)}). ` +
-        'FPL only answers through a proxy: run <code>python3 serve.py</code> and open the address it prints, or set your proxy URL in Settings.',
-        true, true);
+      const notFound = err instanceof HttpError && err.status === 404;
+      if (!state.model) renderWelcome();
+      showBanner(notFound
+        ? `There's no FPL league with ID ${esc(settings.league)}. Check the number in your league's link and try again.`
+        : `Couldn't load league ${esc(settings.league)} from ${esc(where)} (${esc(err.message)}). ` +
+          'FPL only answers through a proxy: run <code>python3 serve.py</code> and open the address it prints, or set your proxy URL in Settings.',
+      true, !notFound);
     } finally {
       state.loading = false;
       $('#refresh-btn').disabled = false;
@@ -174,9 +203,81 @@
     state.demo = true;
     source = FPLDemo.source();
     state.gw = null;
-    state.raw = { bootstrap: null, standings: null, leagueName: '', picks: {}, gw: null };
+    state.compare = null;
+    state.raw = emptyRaw();
     load({ full: true });
   }
+
+  function openLeague(id) {
+    settings.league = id;
+    state.demo = false;
+    source = netSource(settings.apiBase);
+    state.gw = null;
+    state.compare = null;
+    state.raw = emptyRaw();
+    state.model = null;
+    $('#board').innerHTML = '<p class="loading">Loading league…</p>';
+    load({ full: true });
+  }
+
+  function updateUrl() {
+    try {
+      const q = new URLSearchParams();
+      if (state.demo) q.set('demo', '');
+      else q.set('league', settings.league);
+      if (state.gw && state.gw !== state.raw.maxGw) q.set('gw', state.gw);
+      if (state.view === 'table') q.set('view', 'table');
+      if (params.get('api')) q.set('api', params.get('api'));
+      const url = location.pathname + '?' + q.toString().replace(/=(&|$)/g, '$1');
+      if (url !== location.pathname + location.search) history.replaceState(null, '', url);
+    } catch { /* sandboxed frames may refuse history changes */ }
+  }
+
+  // League search: header box and the welcome card share this.
+  document.addEventListener('submit', (e) => {
+    const form = e.target.closest('.league-form');
+    if (!form) return;
+    e.preventDefault();
+    const input = form.querySelector('input');
+    const id = parseLeague(input.value);
+    if (!id) {
+      input.setCustomValidity('Enter a league ID (just the number) or paste your league\'s link from the FPL site.');
+      input.reportValidity();
+      return;
+    }
+    input.setCustomValidity('');
+    input.value = '';
+    input.blur();
+    openLeague(id);
+  });
+  document.addEventListener('input', (e) => { if (e.target.closest('.league-form')) e.target.setCustomValidity(''); });
+
+  function renderWelcome() {
+    clearBanner();
+    document.body.classList.add('welcome-mode');
+    $('#league-name').textContent = 'FPL League Live';
+    $('#gw-label').textContent = 'GW –';
+    $('#strip').innerHTML = '';
+    $('#compare-panel').hidden = true;
+    $('#toolbar').hidden = true;
+    $('#board').className = 'board welcome-view';
+    $('#board').innerHTML = `<section class="welcome">
+      <h2>Follow your mini-league live</h2>
+      <p>See every team in your league side by side, with live points, who's still to play, and projected scores.</p>
+      <form class="league-form">
+        <label for="welcome-league">League ID or link</label>
+        <div class="welcome-row">
+          <input id="welcome-league" name="league" inputmode="url" autocomplete="off" placeholder="e.g. 246924" required>
+          <button type="submit" class="btn primary">Open league</button>
+        </div>
+      </form>
+      <p class="hint">To find it, open your league on the FPL website under <b>Leagues &amp; Cups</b>. The ID is the number after <code>/leagues/</code> in the address, and you can paste the whole link.</p>
+      <p><button type="button" class="btn ghost" data-act="demo">Look around with sample data</button></p>
+    </section>`;
+  }
+  $('#board').addEventListener('click', (e) => {
+    if (e.target.closest('[data-act="demo"]')) useDemo();
+  });
 
   // ---------- Render ----------
   const ORDER = { done: 0, blank: 0, live: 1, upcoming: 2 };
@@ -203,12 +304,28 @@
     $('#gw-prev').disabled = state.gw <= 1;
     $('#gw-next').disabled = state.gw >= (r.maxGw || state.gw);
     const st = $('#gw-status');
+    st.hidden = false;
     st.textContent = m.status.label;
     st.className = 'pill ' + m.status.key;
     $('#updated').textContent = state.updatedAt
       ? state.updatedAt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }) : '';
     $('#projection').value = settings.projection;
     $('#sort').value = settings.sort;
+    $('#show').value = state.show;
+    $('#proj-note').textContent = PROJ_NOTES[settings.projection];
+    $('#toolbar').hidden = false;
+    document.body.classList.remove('welcome-mode');
+    $('#tab-week').setAttribute('aria-selected', String(state.view === 'week'));
+    $('#tab-table').setAttribute('aria-selected', String(state.view === 'table'));
+    document.body.classList.toggle('view-table', state.view === 'table');
+
+    if (state.view === 'table') {
+      renderCompare(null, true);
+      $('#strip').innerHTML = '';
+      renderTable();
+      return;
+    }
+    $('#board').className = 'board';
 
     let teams = sortedTeams();
     let cmp = null;
@@ -247,6 +364,12 @@
     }
     if (t.hits) tags.push(`<span class="tag hit" title="Transfer hit, already taken off">−${t.hits}</span>`);
     if (t.provBonus) tags.push(`<span class="tag provb" title="Includes ${t.provBonus} provisional bonus worked out from live BPS; may change">+${t.provBonus} bonus?</span>`);
+    if (state.show !== 'all') {
+      const n = +state.show;
+      const o = FPL.ownedBy(t, state.model.ownership, n);
+      const what = n === 1 ? 'unique' : `shared by ${n}`;
+      tags.unshift(`<span class="tag diff" title="${o.count} ${what} player${o.count === 1 ? '' : 's'} in the line-up, worth ${o.points} points so far">${o.count} ${what} · ${o.points}</span>`);
+    }
     if (cmp) {
       const side = cmp.a === t ? 'a' : 'b';
       tags.unshift(`<span class="tag" style="color:var(--edge-${side});border-color:currentColor">${side.toUpperCase()}</span>`);
@@ -301,6 +424,7 @@
     if (s.subOut) cls.push('subbed-out');
     if (s.bench && !s.mult) cls.push('benched');
     let edgeAttr = '';
+    if (state.show !== 'all' && !(s.mult > 0 && state.model.ownership.get(p.id) === +state.show)) cls.push('faded');
     if (edgeFor && s.mult > 0) {
       const e = edgeFor.get(p.id);
       if (e === 'shared') cls.push('shared');
@@ -372,10 +496,10 @@
   }
 
   // ---------- Compare ----------
-  function renderCompare(cmp) {
+  function renderCompare(cmp, hide) {
     const panel = $('#compare-panel');
     $('#compare-btn').setAttribute('aria-pressed', String(!!state.compare));
-    if (!state.compare) { panel.hidden = true; return; }
+    if (!state.compare || hide) { panel.hidden = true; return; }
     panel.hidden = false;
     const teams = state.model.teams;
     const opt = (sel) => teams.map((t) => `<option value="${t.entry.entry}"${t.entry.entry === sel ? ' selected' : ''}>${esc(t.entry.player_name)}</option>`).join('');
@@ -448,8 +572,8 @@
   function projTitle(t) {
     if (settings.projection !== 'pace') return 'Projected final score';
     if (t.avg == null) return 'Pace: shown once a player has finished';
-    const slots = t.counted.reduce((a, s) => a + s.mult, 0);
-    return `Pace: avg ${fmt1(t.avg)} × ${slots}${t.hits ? ` − ${t.hits} hit` : ''} = ${fmt1(t.projected)}`;
+    const { banked, open } = t.pace;
+    return `Pace: ${banked} from finished players + avg ${fmt1(t.avg)} × ${open} still to finish${t.hits ? ` − ${t.hits} hit` : ''} = ${fmt1(t.projected)}`;
   }
 
   function toggleCompare() {
@@ -537,9 +661,62 @@
     if (e.target.id === 'pd-close' || e.target === $('#player-dlg')) $('#player-dlg').close();
   });
 
+  // ---------- Standings ----------
+  function renderTable() {
+    const m = state.model;
+    const rows = FPL.standingsTable(m.teams, state.raw.history, state.gw);
+    const current = state.gw === state.raw.maxGw;
+    const live = current && m.status.key !== 'final';
+    const move = (r) => {
+      if (r.prevRank == null || r.rank == null || r.prevRank === r.rank) return '<span class="mv">–</span>';
+      const up = r.rank < r.prevRank;
+      return `<span class="mv ${up ? 'up' : 'down'}" title="${up ? 'Up' : 'Down'} ${Math.abs(r.prevRank - r.rank)} since GW ${state.gw - 1}">${up ? '▲' : '▼'}${Math.abs(r.prevRank - r.rank)}</span>`;
+    };
+    $('#board').className = 'board table-view';
+    $('#board').innerHTML = `<div class="table-wrap">
+      <table class="standings">
+        <caption>${live ? `Live table, including GW ${state.gw} as it stands` : `Table after GW ${state.gw}`}</caption>
+        <thead><tr>
+          <th scope="col">#</th><th scope="col"><span class="sr">Movement</span></th><th scope="col">Manager</th>
+          <th scope="col" class="opt">GW ${state.gw} progress</th><th scope="col" class="num">GW</th>
+          <th scope="col" class="num">Total</th>${live ? '<th scope="col" class="num opt">Projected</th>' : ''}
+        </tr></thead>
+        <tbody>${rows.map((r) => {
+          const t = r.team, e = t.entry;
+          const isMe = String(e.entry) === String(settings.me);
+          return `<tr data-go="${e.entry}"${isMe ? ' class="me"' : ''}>
+            <td class="rk">${r.rank ?? '–'}</td><td>${move(r)}</td>
+            <td class="mgr"><b>${esc(e.player_name)}</b><small>${esc(e.entry_name)}</small></td>
+            <td class="opt">${barHtml(t)}</td>
+            <td class="num gwp${t.provisional ? ' prov' : ''}">${t.live}</td>
+            <td class="num tot">${r.total ?? '–'}</td>
+            ${live ? `<td class="num opt" title="Total before this week + projected GW score (${esc(projName())})">${projText(r.projTotal)}</td>` : ''}
+          </tr>`;
+        }).join('')}</tbody>
+      </table>
+      <p class="table-note">Select a manager to see their team this week.</p>
+    </div>`;
+  }
+  $('#board').addEventListener('click', (e) => {
+    const tr = e.target.closest('.standings tr[data-go]');
+    if (!tr) return;
+    setView('week');
+    const row = document.getElementById('m-' + tr.dataset.go);
+    if (row) {
+      row.scrollIntoView({ block: 'nearest' });
+      $('#board').scrollTo({ left: row.offsetLeft - $('#board').offsetLeft });
+    }
+  });
+  function setView(v) {
+    state.view = v;
+    updateUrl();
+    render();
+  }
+  $('#tab-week').addEventListener('click', () => setView('week'));
+  $('#tab-table').addEventListener('click', () => setView('table'));
+
   // ---------- Settings ----------
   function openSettings() {
-    $('#set-league').value = settings.league;
     $('#set-api').value = settings.apiBase;
     const teams = state.model ? state.model.teams : [];
     $('#set-me').innerHTML = '<option value="">None</option>' +
@@ -552,25 +729,14 @@
   $('#set-demo').addEventListener('click', () => { $('#settings-dlg').close(); useDemo(); });
   $('#settings-form').addEventListener('submit', (e) => {
     e.preventDefault();
-    const league = $('#set-league').value.trim();
     const api = $('#set-api').value.trim() || './api/';
-    const changedSource = league !== String(settings.league) || api !== settings.apiBase || state.demo;
-    settings.league = league;
+    const changedSource = api !== settings.apiBase;
     settings.apiBase = api;
     settings.me = $('#set-me').value;
-    store.set('league', league);
     store.set('apiBase', api);
-    store.set('me', settings.me);
     $('#settings-dlg').close();
-    if (changedSource) {
-      state.demo = false;
-      source = netSource(api);
-      state.gw = null;
-      state.raw = { bootstrap: null, standings: null, leagueName: '', picks: {}, gw: null };
-      load({ full: true });
-    } else {
-      render();
-    }
+    if (changedSource && !state.demo && settings.league) openLeague(settings.league);
+    else render();
   });
 
   // ---------- Controls ----------
@@ -579,14 +745,18 @@
     store.set('basis', settings.projection);
     rebuild();
   });
+  $('#show').addEventListener('change', (e) => {
+    state.show = e.target.value;
+    render();
+  });
   $('#sort').addEventListener('change', (e) => {
     settings.sort = e.target.value;
     store.set('sort', settings.sort);
     render();
   });
   $('#refresh-btn').addEventListener('click', () => load());
-  $('#gw-prev').addEventListener('click', () => { if (state.gw > 1) { state.gw--; load(); } });
-  $('#gw-next').addEventListener('click', () => { state.gw++; load(); });
+  $('#gw-prev').addEventListener('click', () => { if (state.gw > 1 && !state.loading) { state.gw--; load(); } });
+  $('#gw-next').addEventListener('click', () => { if (state.gw < state.raw.maxGw && !state.loading) { state.gw++; load(); } });
 
   load();
 })();

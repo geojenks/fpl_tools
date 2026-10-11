@@ -73,7 +73,7 @@
 
   // Force a couple of situations worth showing: a non-playing starter (auto-sub)
   // and a quiet captain.
-  const OVERRIDES = { Iwobi: { minutes: 0 }, 'Calvert-Lewin': { minutes: 0 } };
+  const OVERRIDES = { Iwobi: { minutes: 0 }, 'Calvert-Lewin': { minutes: 0 }, Haaland: { minutes: 90 } };
 
   function rng(seed) {
     let s = seed >>> 0;
@@ -89,8 +89,11 @@
   const GOAL_PTS = { 1: 10, 2: 6, 3: 5, 4: 4 };
   const CS_PTS = { 1: 4, 2: 4, 3: 1, 4: 0 };
 
-  function make(seed = 8) {
-    const r = rng(seed);
+  const CURRENT = 8;
+
+  /** One gameweek of sample data. Weeks before CURRENT are complete. */
+  function make(gw = CURRENT) {
+    const r = rng(gw * 7919 + 8);
     const pick = (list, weight) => {
       const total = list.reduce((a, x) => a + weight(x), 0);
       if (!total) return null;
@@ -105,14 +108,15 @@
       id: i + 1, web_name: name, team: teamId[team], element_type: pos, ep_this: xp.toFixed(1),
     }));
     const byName = Object.fromEntries(elements.map((e) => [e.web_name, e]));
-    const gw = 8;
-    const now = Date.now();
+    const now = Date.now() - (CURRENT - gw) * 7 * 24 * 3600e3;
     const hour = 3600e3;
 
     const fixtures = [];
     const liveEls = new Map(elements.map((e) => [e.id, { id: e.id, stats: blankStats(), explain: [] }]));
 
-    FIXTURES.forEach(([h, a, state, elapsed], i) => {
+    FIXTURES.forEach(([h, a, fixtureState, liveElapsed], i) => {
+      const state = gw < CURRENT ? 'final' : fixtureState;
+      const elapsed = gw < CURRENT ? 90 : liveElapsed;
       const f = {
         id: 1000 + i, event: gw, team_h: teamId[h], team_a: teamId[a],
         kickoff_time: new Date(now + (state === 'upcoming' ? (i - 6) * 2.5 * hour : state === 'live' ? -(elapsed + 15) * 60e3 : -(9 - i) * hour)).toISOString(),
@@ -204,10 +208,20 @@
 
     function byId(id) { return elements[id - 1]; }
 
-    const standings = MANAGERS.map((m, i) => ({
-      id: i + 1, entry: 5000 + i, entry_name: m.team, player_name: m.name, rank: 0, last_rank: 0,
-      total: 380 + Math.floor(r() * 90), event_total: 0,
-    })).sort((x, y) => y.total - x.total).map((s, i) => ({ ...s, rank: i + 1, last_rank: i + 1 }));
+    // Season history is fixed across weeks so the table is consistent.
+    const rs = rng(4242);
+    const history = {};
+    const standings = MANAGERS.map((m, i) => {
+      let total = 0;
+      const current = [];
+      for (let g = 1; g < CURRENT; g++) {
+        const points = 38 + Math.floor(rs() * 40);
+        total += points;
+        current.push({ event: g, points, total_points: total, event_transfers_cost: 0 });
+      }
+      history[5000 + i] = { current };
+      return { id: i + 1, entry: 5000 + i, entry_name: m.team, player_name: m.name, rank: 0, last_rank: 0, total, event_total: 0 };
+    }).sort((x, y) => y.total - x.total).map((s, i) => ({ ...s, rank: i + 1, last_rank: i + 1 }));
 
     const picks = {};
     MANAGERS.forEach((m, i) => {
@@ -232,7 +246,9 @@
     return {
       gw,
       bootstrap: {
-        events: [{ id: gw, name: `Gameweek ${gw}`, is_current: true, finished: false, data_checked: false }],
+        events: Array.from({ length: 38 }, (_, i) => ({
+          id: i + 1, name: `Gameweek ${i + 1}`, is_current: i + 1 === CURRENT, finished: i + 1 < CURRENT, data_checked: i + 1 < CURRENT,
+        })),
         teams, elements,
         element_types: [1, 2, 3, 4].map((id) => ({ id, singular_name_short: ['GKP', 'DEF', 'MID', 'FWD'][id - 1] })),
       },
@@ -240,6 +256,7 @@
       live: { elements: [...liveEls.values()] },
       league: { league: { id: 0, name: 'Sample League' }, standings: { results: standings } },
       picks,
+      history,
     };
   }
 
@@ -248,17 +265,27 @@
   }
 
   /** Answer API paths from the sample data, as the network source would. */
-  function source(seed) {
-    const d = make(seed);
+  function source() {
+    const weeks = new Map();
+    const week = (gw) => {
+      const g = Math.min(Math.max(+gw || CURRENT, 1), CURRENT);
+      if (!weeks.has(g)) weeks.set(g, make(g));
+      return weeks.get(g);
+    };
     return {
       demo: true,
       async get(path) {
+        const d = week(CURRENT);
         if (path.startsWith('bootstrap-static')) return d.bootstrap;
-        if (path.startsWith('fixtures')) return d.fixtures;
-        if (/^event\/\d+\/live/.test(path)) return d.live;
         if (path.startsWith('leagues-classic')) return d.league;
-        const m = path.match(/^entry\/(\d+)\/event\/\d+\/picks/);
-        if (m && d.picks[m[1]]) return d.picks[m[1]];
+        let m = path.match(/^fixtures\/\?event=(\d+)/);
+        if (m) return week(m[1]).fixtures;
+        m = path.match(/^event\/(\d+)\/live/);
+        if (m) return week(m[1]).live;
+        m = path.match(/^entry\/(\d+)\/event\/(\d+)\/picks/);
+        if (m && d.picks[m[1]]) return week(m[2]).picks[m[1]];
+        m = path.match(/^entry\/(\d+)\/history/);
+        if (m && d.history[m[1]]) return d.history[m[1]];
         throw new Error(`Sample data has no ${path}`);
       },
     };

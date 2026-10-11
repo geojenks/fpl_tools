@@ -275,23 +275,28 @@
   }
 
   /**
-   * 'pace': every counting slot scores the manager's average per finished
-   * player, captain counted at their multiplier — avg × 12 for a normal week
-   * (13 with Triple Captain, 16 with Bench Boost), minus hits. Null until
-   * someone has finished. Other modes: points so far + basis per match to come.
+   * 'pace': finished players count at their real score; every player not yet
+   * finished (live or to play) scores the manager's average per finished
+   * player, at their multiplier (captain twice). Equals the final score once
+   * everyone has played. Null until someone has finished.
+   * Other modes: points so far + a basis for each match still to come.
    */
   function project(team, mode, leagueAvg) {
     if (mode === 'pace') {
       if (team.avg == null) {
         for (const s of team.counted) s.projected = null;
+        team.pace = null;
         return null;
       }
-      let slots = 0;
+      let banked = 0, open = 0;
       for (const s of team.counted) {
-        s.projected = s.player.state === 'done' || s.player.state === 'blank' ? s.player.points : team.avg;
-        slots += s.mult;
+        const finished = s.player.state === 'done' || s.player.state === 'blank';
+        s.projected = finished ? s.player.points : team.avg;
+        if (finished) banked += s.mult * s.player.points;
+        else open += s.mult;
       }
-      return team.avg * slots - team.hits;
+      team.pace = { banked, open };
+      return banked + team.avg * open - team.hits;
     }
     let total = -team.hits;
     for (const s of team.counted) {
@@ -328,7 +333,47 @@
       .map((e) => buildTeam(e, picksByEntry[e.entry], players.player));
     const leagueAvg = leagueAverage(teams);
     for (const t of teams) t.projected = project(t, projection, leagueAvg);
-    return { teams, leagueAvg, players, status: gameweekStatus(fixtures), projection };
+    return { teams, leagueAvg, players, status: gameweekStatus(fixtures), projection, ownership: ownership(teams) };
+  }
+
+  /** How many managers have each player in their scoring line-up. */
+  function ownership(teams) {
+    const counts = new Map();
+    for (const t of teams) for (const s of t.counted) counts.set(s.player.id, (counts.get(s.player.id) || 0) + 1);
+    return counts;
+  }
+
+  /** Players owned by exactly `n` managers, per team: count and points they bring. */
+  function ownedBy(team, counts, n) {
+    const slots = team.counted.filter((s) => counts.get(s.player.id) === n);
+    return { count: slots.length, points: slots.reduce((a, s) => a + s.mult * s.player.points, 0) };
+  }
+
+  function competitionRanks(values) {
+    return values.map((v) => (v == null ? null : 1 + values.filter((o) => o != null && o > v).length));
+  }
+
+  /**
+   * Season table after gameweek `gw`: total before the week (from each
+   * entry's history) plus this week's live points. Rank movement compares
+   * with the table before the week started.
+   */
+  function standingsTable(teams, historyByEntry, gw) {
+    const rows = teams.map((t) => {
+      const hist = ((historyByEntry[t.entry.entry] || {}).current || []).filter((h) => h.event < gw);
+      const known = !!historyByEntry[t.entry.entry];
+      const before = known ? (hist.length ? hist[hist.length - 1].total_points : 0) : null;
+      return {
+        team: t,
+        before,
+        total: before == null ? null : before + t.live,
+        projTotal: before == null || t.projected == null ? null : before + t.projected,
+      };
+    });
+    const rank = competitionRanks(rows.map((r) => r.total));
+    const prev = competitionRanks(rows.map((r) => r.before));
+    rows.forEach((r, i) => { r.rank = rank[i]; r.prevRank = prev[i]; });
+    return rows.sort((a, b) => (a.rank ?? 1e9) - (b.rank ?? 1e9) || b.team.live - a.team.live);
   }
 
   /**
@@ -372,6 +417,7 @@
   const api = {
     POS, statLabel, bonusFromBps, buildPlayers, buildTeam, buildLeague, compare,
     projectPlayer, leagueAverage, gameweekStatus, formationOk, fixtureDone,
+    ownership, ownedBy, standingsTable,
   };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.FPL = api;
