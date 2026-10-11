@@ -8,7 +8,9 @@ Standard library only. Responses are cached briefly so a page left open
 doesn't hammer FPL.
 """
 import argparse
+import base64
 import gzip
+import re
 import socket
 import threading
 import time
@@ -30,6 +32,7 @@ TTL = [
     ("event/", 30),
     ("fixtures", 30),
 ]
+SAFE_PATH = re.compile(r"^[A-Za-z0-9_\-/?=&.]+$")
 _cache: dict[str, tuple[float, int, bytes]] = {}
 _lock = threading.Lock()
 
@@ -68,7 +71,14 @@ class Handler(SimpleHTTPRequestHandler):
     def do_GET(self):
         if self.path.startswith("/api/"):
             path = self.path[len("/api/"):]
-            if ".." in path:
+            if path.startswith("v/"):  # base64url-encoded path, see worker/index.js
+                try:
+                    code = path[2:]
+                    path = base64.urlsafe_b64decode(code + "=" * (-len(code) % 4)).decode()
+                except (ValueError, UnicodeDecodeError):
+                    self.send_error(400)
+                    return
+            if ".." in path or not SAFE_PATH.match(path):
                 self.send_error(400)
                 return
             try:

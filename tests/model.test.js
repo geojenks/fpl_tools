@@ -147,3 +147,11 @@ test('past sample weeks are complete', () => {
   const d = Demo.make(5);
   assert.ok(d.fixtures.every((f) => f.finished));
 });
+
+test('ownership filter: up to n includes unique picks, exactly n does not', () => {
+  assert.equal(FPL.ownedMatch(1, 2, true), true);
+  assert.equal(FPL.ownedMatch(2, 2, true), true);
+  assert.equal(FPL.ownedMatch(3, 2, true), false);
+  assert.equal(FPL.ownedMatch(1, 2, false), false);
+  assert.equal(FPL.ownedMatch(undefined, 6, true), false);
+});

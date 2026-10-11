@@ -343,9 +343,12 @@
     return counts;
   }
 
-  /** Players owned by exactly `n` managers, per team: count and points they bring. */
-  function ownedBy(team, counts, n) {
-    const slots = team.counted.filter((s) => counts.get(s.player.id) === n);
+  /** Does an ownership count pass "owned by exactly n" or "up to n" managers? */
+  const ownedMatch = (count, n, upTo) => !!count && (upTo ? count <= n : count === n);
+
+  /** A team's players passing the ownership test: count and points they bring. */
+  function ownedBy(team, counts, n, upTo = false) {
+    const slots = team.counted.filter((s) => ownedMatch(counts.get(s.player.id), n, upTo));
     return { count: slots.length, points: slots.reduce((a, s) => a + s.mult * s.player.points, 0) };
   }
 
@@ -417,7 +420,7 @@
   const api = {
     POS, statLabel, bonusFromBps, buildPlayers, buildTeam, buildLeague, compare,
     projectPlayer, leagueAverage, gameweekStatus, formationOk, fixtureDone,
-    ownership, ownedBy, standingsTable,
+    ownership, ownedBy, ownedMatch, standingsTable,
   };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.FPL = api;

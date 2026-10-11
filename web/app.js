@@ -30,7 +30,7 @@
     model: null,
     gw: params.get('gw') ? +params.get('gw') : null,
     view: params.get('view') === 'table' ? 'table' : 'week',
-    show: 'all', // 'all' | '1' | '2': fade players not owned by exactly that many managers
+    own: { on: false, n: 2, upTo: true }, // fade players not owned by (up to / exactly) n managers
     compare: null, // { a: entryId, b: entryId }
     updatedAt: null,
     timer: null,
@@ -45,7 +45,7 @@
   }
 
   const PROJ_NOTES = {
-    pace: 'Pace: finished players at their real score, plus the manager\'s average per finished player for everyone still to finish (captain counts double).',
+    pace: 'Pace: real scores for finished players, plus the manager\'s average for everyone still to finish (captain double).',
     league: 'League average: points so far, plus the average of every finished player in this league this week for each match still to come.',
     own: 'Own average: points so far, plus that manager\'s own average per finished player for each match still to come.',
     xp: 'FPL expected pts: points so far, plus FPL\'s predicted score for each player still to play.',
@@ -74,6 +74,8 @@
   class HttpError extends Error {
     constructor(status, path, detail) { super(detail ? `${detail}, for ${path}` : `HTTP ${status} for ${path}`); this.status = status; }
   }
+  // Encoded so browser content blockers don't mistake FPL paths (/event/, /entry/) for trackers.
+  const b64url = (text) => btoa(text).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
   function netSource(base) {
     const root = base.endsWith('/') ? base : base + '/';
     return {
@@ -81,7 +83,7 @@
       async get(path) {
         let r;
         try {
-          r = await fetch(root + path, { cache: 'no-store', signal: AbortSignal.timeout ? AbortSignal.timeout(30000) : undefined });
+          r = await fetch(root + 'v/' + b64url(path), { cache: 'no-store', signal: AbortSignal.timeout ? AbortSignal.timeout(30000) : undefined });
         } catch (err) {
           if (err.name === 'TimeoutError') throw new Error(`no answer after 30 seconds, for ${path}`);
           throw new Error(`${err.message}, for ${path}`);
@@ -325,7 +327,12 @@
       ? state.updatedAt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }) : '';
     $('#projection').value = settings.projection;
     $('#sort').value = settings.sort;
-    $('#show').value = state.show;
+    const nMax = Math.max(1, m.teams.length);
+    state.own.n = Math.min(state.own.n, nMax);
+    $('#own-on').checked = state.own.on;
+    $('#own-mode').value = state.own.upTo ? 'upto' : 'exact';
+    $('#own-n').innerHTML = Array.from({ length: nMax }, (_, i) =>
+      `<option value="${i + 1}"${i + 1 === state.own.n ? ' selected' : ''}>${i + 1} manager${i ? 's' : ''}</option>`).join('');
     $('#proj-note').textContent = PROJ_NOTES[settings.projection];
     $('#toolbar').hidden = false;
     document.body.classList.remove('welcome-mode');
@@ -351,10 +358,16 @@
         teams = [a, b];
       }
     }
-    renderCompare(cmp);
+    const lists = renderCompare(cmp);
+    if (cmp) {
+      renderStrip([]);
+      $('#board').className = 'board compare-view';
+      $('#board').innerHTML = matchupHtml(cmp) + lists;
+      return;
+    }
     renderStrip(teams);
     const rankOf = new Map(sortedTeams().map((t, i) => [t.entry.entry, i + 1]));
-    $('#board').innerHTML = teams.map((t) => rowHtml(t, rankOf.get(t.entry.entry), cmp)).join('');
+    $('#board').innerHTML = teams.map((t) => rowHtml(t, rankOf.get(t.entry.entry))).join('');
     observeSlides();
   }
 
@@ -368,7 +381,24 @@
 
   const CHIPS = { bboost: ['BB', 'Bench Boost'], '3xc': ['TC', 'Triple Captain'], freehit: ['FH', 'Free Hit'], wildcard: ['WC', 'Wildcard'], manager: ['AM', 'Assistant Manager'] };
 
-  function rowHtml(t, rank, cmp) {
+  const POS_NAMES = { 1: 'GK', 2: 'DEF', 3: 'MID', 4: 'FWD' };
+
+  /** Starting line-up split into GK / DEF / MID / FWD groups (anything else joins FWD). */
+  function lineGroups(slots) {
+    const groups = [1, 2, 3, 4].map((pos) => slots.filter((s) => s.player.pos === pos));
+    groups[3] = groups[3].concat(slots.filter((s) => !POS_NAMES[s.player.pos]));
+    return groups;
+  }
+  const formation = (groups) => groups.slice(1).map((g) => g.length).join('-');
+
+  function ownTag(t) {
+    const { n, upTo } = state.own;
+    const o = FPL.ownedBy(t, state.model.ownership, n, upTo);
+    const what = n === 1 ? (upTo ? 'unique' : 'unique') : `owned by ${upTo ? '≤' : ''}${n}`;
+    return `<span class="tag diff" title="${o.count} player${o.count === 1 ? '' : 's'} ${what}, worth ${o.points} points so far">${o.count} ${what} · ${o.points}</span>`;
+  }
+
+  function rowHtml(t, rank) {
     const e = t.entry;
     const isMe = String(e.entry) === String(settings.me);
     const tags = [];
@@ -378,27 +408,12 @@
     }
     if (t.hits) tags.push(`<span class="tag hit" title="Transfer hit, already taken off">−${t.hits}</span>`);
     if (t.provBonus) tags.push(`<span class="tag provb" title="Includes ${t.provBonus} provisional bonus worked out from live BPS; may change">+${t.provBonus} bonus?</span>`);
-    if (state.show !== 'all') {
-      const n = +state.show;
-      const o = FPL.ownedBy(t, state.model.ownership, n);
-      const what = n === 1 ? 'unique' : `shared by ${n}`;
-      tags.unshift(`<span class="tag diff" title="${o.count} ${what} player${o.count === 1 ? '' : 's'} in the line-up, worth ${o.points} points so far">${o.count} ${what} · ${o.points}</span>`);
-    }
-    if (cmp) {
-      const side = cmp.a === t ? 'a' : 'b';
-      tags.unshift(`<span class="tag" style="color:var(--edge-${side});border-color:currentColor">${side.toUpperCase()}</span>`);
-    }
-
-    const xi = t.slots.filter((s) => !s.bench);
-    const lines = [1, 2, 3, 4].map((pos) => xi.filter((s) => s.player.pos === pos));
-    // Anything odd (e.g. a manager slot) goes with forwards.
-    const extra = xi.filter((s) => ![1, 2, 3, 4].includes(s.player.pos));
-    lines[3] = lines[3].concat(extra);
-    const edgeFor = cmp ? edgeMap(cmp, t) : null;
+    if (state.own.on) tags.unshift(ownTag(t));
+    const lines = lineGroups(t.slots.filter((s) => !s.bench));
 
     return `<article class="row${isMe ? ' me' : ''}" id="m-${e.entry}" data-entry="${e.entry}">
       <div class="sum">
-        <div class="who"><span class="rank">${rank}</span><b title="${esc(e.player_name)}">${esc(e.player_name)}</b><small title="${esc(e.entry_name)}">${esc(e.entry_name)}</small></div>
+        <div class="who"><span class="rank">${rank}</span><b title="${esc(e.player_name)}">${esc(e.player_name)}</b><small title="${esc(e.entry_name)}">${esc(e.entry_name)}</small><span class="fm" title="Formation">${formation(lines)}</span></div>
         <div class="scoreline">
           <span class="total${t.provisional ? ' prov' : ''}" title="${t.provisional ? 'Includes points not yet final' : 'Live points'}">${t.live}</span>
           <span class="proj" title="${esc(projTitle(t))}">proj <b>${projText(t.projected)}</b></span>
@@ -411,18 +426,52 @@
           <span title="Players yet to play"><b>${t.toPlay.count}</b> to play${t.toPlay.captain ? ' (C)' : ''}</span>
         </div>
       </div>
-      <div class="xi">${lines.map((l) => `<div class="line">${l.map((s) => cardHtml(s, edgeFor)).join('')}</div>`).join('')}</div>
-      <div class="bench"><span class="bench-label">Bench</span>${t.slots.filter((s) => s.bench).map((s) => cardHtml(s, edgeFor)).join('')}</div>
+      <div class="xi">${lines.map((l, i) => `<div class="line" data-pos="${POS_NAMES[i + 1]}" style="flex:${Math.max(l.length, 1)}">${l.map((s) => cardHtml(s)).join('')}</div>`).join('')}</div>
+      <div class="bench"><span class="bench-label">Bench</span>${t.slots.filter((s) => s.bench).map((s) => cardHtml(s)).join('')}</div>
     </article>`;
   }
 
-  function edgeMap(cmp, team) {
-    const map = new Map();
-    for (const r of cmp.shared) map.set(r.player.id, 'shared');
-    for (const r of cmp.edgeA) map.set(r.player.id, 'a');
-    for (const r of cmp.edgeB) map.set(r.player.id, 'b');
-    map.side = cmp.a === team ? 'a' : 'b';
-    return map;
+  /**
+   * Compare marking for one side: a player cancels out (crossed off) when the
+   * other manager has him at the same or a higher multiplier; otherwise he's
+   * this side's edge, noting the net multiplier when both own him.
+   */
+  function compareMark(cmp, side) {
+    const rows = new Map([...cmp.edgeA, ...cmp.edgeB, ...cmp.shared].map((r) => [r.player.id, r]));
+    return (s) => {
+      const r = rows.get(s.player.id);
+      if (!r || !s.mult) return null;
+      const mine = side === 'a' ? r.a : r.b, theirs = side === 'a' ? r.b : r.a;
+      if (theirs >= mine) return { cls: 'cancelled', title: 'Both own him: cancels out' };
+      return {
+        cls: 'edge', style: `--edge-color:var(--edge-${side})`,
+        note: theirs ? `net ×${mine - theirs}` : '',
+        title: theirs ? `Both own him, but this side has him ×${mine} vs ×${theirs}` : 'Only this side has him',
+      };
+    };
+  }
+
+  /** Both teams lined up facing each other: A's goalkeeper on the left, B's on the right. */
+  function matchupHtml(cmp) {
+    const half = (team, side) => {
+      const mark = compareMark(cmp, side);
+      const onPitch = team.slots.filter((s) => (!s.bench && !s.subOut) || s.subIn);
+      const groups = lineGroups(onPitch);
+      if (side === 'b') groups.reverse();
+      const bench = team.slots.filter((s) => s.bench && !s.subIn);
+      return `<section class="half ${side}" data-entry="${team.entry.entry}" aria-label="${esc(team.entry.player_name)}">
+        <header class="half-head">
+          <span class="side-tag">${side.toUpperCase()}</span>
+          <b>${esc(team.entry.player_name)}</b>
+          <span class="total${team.provisional ? ' prov' : ''}">${team.live}</span>
+          <span class="proj">proj <b>${projText(team.projected)}</b></span>
+          <span class="fm">${formation(lineGroups(onPitch))}</span>
+        </header>
+        <div class="pitch-cols">${groups.map((g) => `<div class="col">${g.map((s) => cardHtml(s, mark)).join('')}</div>`).join('')}</div>
+        <div class="half-bench"><span class="bench-label">Bench</span>${bench.map((s) => cardHtml(s, mark)).join('')}</div>
+      </section>`;
+    };
+    return `<div class="matchup">${half(cmp.a, 'a')}${half(cmp.b, 'b')}</div>`;
   }
 
   function kickoffText(iso) {
@@ -431,18 +480,18 @@
     return d.toLocaleDateString([], { weekday: 'short' }) + ' ' + d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hourCycle: 'h23' });
   }
 
-  function cardHtml(s, edgeFor) {
+  function cardHtml(s, markFn) {
     const p = s.player;
     const cls = ['card', p.state];
     if (p.dnp) cls.push('dnp');
     if (s.subOut) cls.push('subbed-out');
     if (s.bench && !s.mult) cls.push('benched');
+    if (state.own.on && !(s.mult > 0 && FPL.ownedMatch(state.model.ownership.get(p.id), state.own.n, state.own.upTo))) cls.push('faded');
+    const mark = markFn ? markFn(s) : null;
     let edgeAttr = '';
-    if (state.show !== 'all' && !(s.mult > 0 && state.model.ownership.get(p.id) === +state.show)) cls.push('faded');
-    if (edgeFor && s.mult > 0) {
-      const e = edgeFor.get(p.id);
-      if (e === 'shared') cls.push('shared');
-      else if (e === edgeFor.side) { cls.push('edge'); edgeAttr = ` style="--edge-color:var(--edge-${e})"`; }
+    if (mark) {
+      cls.push(mark.cls);
+      edgeAttr = (mark.style ? ` style="${mark.style}"` : '') + ` title="${esc(mark.title)}"`;
     }
 
     let ptsHtml;
@@ -474,7 +523,7 @@
     const label = `${p.name}, ${p.team.short_name}, ${s.mult > 0 ? s.mult * p.points : p.points} points`;
     return `<button type="button" class="${cls.join(' ')}" data-el="${p.id}" data-mult="${s.mult}" aria-label="${esc(label)}"${edgeAttr}>
       <span class="kit" style="${kitStyle(p.team)}">${esc(p.team.short_name)}</span>
-      <span class="nm" title="${esc(p.name)}">${esc(p.name)}</span>${ptsHtml}<span class="meta">${meta}</span>${badge}${sub}
+      <span class="nm" title="${esc(p.name)}">${esc(p.name)}</span>${ptsHtml}<span class="meta">${meta}</span>${badge}${sub}${mark && mark.note ? `<span class="net">${mark.note}</span>` : ''}
     </button>`;
   }
 
@@ -513,7 +562,7 @@
   function renderCompare(cmp, hide) {
     const panel = $('#compare-panel');
     $('#compare-btn').setAttribute('aria-pressed', String(!!state.compare));
-    if (!state.compare || hide) { panel.hidden = true; return; }
+    if (!state.compare || hide) { panel.hidden = true; return ''; }
     panel.hidden = false;
     const teams = state.model.teams;
     const opt = (sel) => teams.map((t) => `<option value="${t.entry.entry}"${t.entry.entry === sel ? ' selected' : ''}>${esc(t.entry.player_name)}</option>`).join('');
@@ -528,7 +577,7 @@
       <span class="spacer"></span>
       <button type="button" class="btn ghost" id="cmp-close">Close compare</button>
     </div>`;
-    if (!cmp) { panel.innerHTML = head + '<p class="verdict">Pick two different managers.</p>'; return; }
+    if (!cmp) { panel.innerHTML = head + '<p class="verdict">Pick two different managers.</p>'; return ''; }
 
     const an = cmp.a.entry.player_name, bn = cmp.b.entry.player_name;
     const lead = cmp.liveDiff;
@@ -562,9 +611,8 @@
       </div>`;
     };
 
-    panel.innerHTML = head +
-      `<p class="verdict">${verdict}${remaining}${need}${projLine}</p>
-      <div class="cmp-cols">
+    panel.innerHTML = head + `<p class="verdict">${verdict}${remaining}${need}${projLine}</p>`;
+    return `<div class="cmp-cols">
         ${col('a', `${esc(an)}'s edge · want these to score`, cmp.edgeA, 'No differentials.')}
         ${col('b', `${esc(bn)}'s edge · want these to blank`, cmp.edgeB, 'No differentials.')}
         ${col('s', 'Cancelled out · same player, same multiplier', cmp.shared.map((r) => ({ ...r, net: r.a })), 'No shared players.')}
@@ -615,7 +663,7 @@
   // ---------- Player breakdown ----------
   $('#board').addEventListener('click', (e) => {
     const card = e.target.closest('.card');
-    if (card) openPlayer(+card.dataset.el, +card.dataset.mult, card.closest('.row').dataset.entry);
+    if (card) openPlayer(+card.dataset.el, +card.dataset.mult, card.closest('[data-entry]').dataset.entry);
   });
 
   function openPlayer(id, mult, entryId) {
@@ -759,10 +807,15 @@
     store.set('basis', settings.projection);
     rebuild();
   });
-  $('#show').addEventListener('change', (e) => {
-    state.show = e.target.value;
+  const ownChanged = (tick) => {
+    if (tick) state.own.on = true;
+    state.own.upTo = $('#own-mode').value === 'upto';
+    state.own.n = +$('#own-n').value || state.own.n;
     render();
-  });
+  };
+  $('#own-on').addEventListener('change', (e) => { state.own.on = e.target.checked; ownChanged(false); });
+  $('#own-mode').addEventListener('change', () => ownChanged(true));
+  $('#own-n').addEventListener('change', () => ownChanged(true));
   $('#sort').addEventListener('change', (e) => {
     settings.sort = e.target.value;
     store.set('sort', settings.sort);

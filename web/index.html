@@ -40,13 +40,14 @@
         <option value="xp">FPL expected pts</option>
       </select>
     </label>
-    <label class="field week-only" for="show">Show
-      <select id="show">
-        <option value="all">All players</option>
-        <option value="1">Unique picks</option>
-        <option value="2">Shared by 2</option>
+    <div class="field week-only own" role="group" aria-label="Ownership filter">
+      <label class="chk" for="own-on"><input type="checkbox" id="own-on"> Only players owned by</label>
+      <select id="own-mode" aria-label="Up to or exactly">
+        <option value="upto">up to</option>
+        <option value="exact">exactly</option>
       </select>
-    </label>
+      <select id="own-n" aria-label="Number of managers"></select>
+    </div>
     <label class="field week-only" for="sort">Sort
       <select id="sort">
         <option value="live">Live points</option>
@@ -79,7 +80,8 @@
     <li><span class="dot dnp"></span>Didn't play</li>
     <li><span class="prov-mark">+2b?</span>Provisional bonus (from BPS, not yet confirmed)</li>
     <li><b>C</b> / <b>V</b> captain, vice · <b>↑ ↓</b> automatic sub (projected until the gameweek ends)</li>
-    <li>Unique picks / Shared by 2: players in the scoring line-up of exactly 1 or 2 managers in this league. Everyone else's players fade out.</li>
+    <li>Only players owned by: keeps players in the scoring line-up of up to (or exactly) that many managers in this league, and fades out everyone else. Up to 1 shows unique picks.</li>
+    <li>Compare: crossed-off players cancel out (both own them at the same multiplier). A coloured underline marks each side's edge.</li>
   </ul>
 </details>
 
