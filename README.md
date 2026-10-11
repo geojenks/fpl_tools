@@ -42,15 +42,16 @@ python3 serve.py --lan    # also prints an address your phone can use on the sam
 
 It needs only the Python 3 standard library. It serves the page from `web/` and forwards `/api/*` to `https://fantasy.premierleague.com/api/`, with short caching.
 
-### 2. Online, for your phone and your friends (Cloudflare Pages, free)
+### 2. Online, for your phone and your friends (Cloudflare Workers, free)
 
-One deploy serves both the page and the API proxy (`functions/api/[[path]].js`):
+A single Cloudflare Worker, `fpl-tools`, serves the page from `web/` and proxies `/api/*` to FPL (`worker/index.js`, configured in `wrangler.jsonc`):
 
-1. In the Cloudflare dashboard, go to *Workers & Pages → Create → Pages → Connect to Git* and pick this repository.
-2. Set *Production branch* to the branch you want live, *Build command* to nothing, and *Build output directory* to `web`.
-3. Deploy. Your league is then at `https://<project>.pages.dev/?league=246924`, and Cloudflare redeploys on every push.
+1. In the Cloudflare dashboard, go to *Workers & Pages → Create → Import a repository* and pick this repository.
+2. Name the Worker `fpl-tools`. It must match `name` in `wrangler.jsonc`.
+3. Leave the build command empty and keep the deploy command as `npx wrangler deploy`. Under *Settings → Build → Branch control*, set the production branch to `main`.
+4. Deploy. Your league is then at `https://fpl-tools.<your-subdomain>.workers.dev/?league=246924`, and Cloudflare redeploys on every push to `main`.
 
-Alternatively, host `web/` anywhere static (such as GitHub Pages) and deploy `proxy/worker.js` as a Cloudflare Worker. Then set *API proxy URL* in Settings to `https://<your-worker>.workers.dev/api/`.
+The `/api/` responses allow cross-origin requests, so a copy of `web/` hosted elsewhere (such as GitHub Pages) can use the Worker too. Set *API proxy URL* in Settings to `https://fpl-tools.<your-subdomain>.workers.dev/api/`.
 
 ### Links and leagues
 
@@ -73,7 +74,6 @@ node --test tests/*.test.js
 | `web/app.js` | Fetching and rendering |
 | `web/demo.js` | Sample gameweek in the FPL API's own response shapes |
 | `serve.py` | Local server and API proxy |
-| `functions/api/[[path]].js` | API proxy when hosted on Cloudflare Pages |
-| `proxy/worker.js` | Standalone Cloudflare Worker proxy |
+| `worker/index.js`, `wrangler.jsonc` | Cloudflare Worker: hosts `web/` and proxies the API |
 
 FPL endpoints used: `bootstrap-static/`, `fixtures/?event={gw}`, `event/{gw}/live/`, `leagues-classic/{id}/standings/` (with `leagues-h2h/` as a fallback), `entry/{id}/event/{gw}/picks/`, and `entry/{id}/history/`. For leagues over 50 managers, only the first page of standings is shown.
