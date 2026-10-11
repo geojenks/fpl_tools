@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>FPL League Live</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=Barlow:wght@400;500;600&display=swap">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="top">
+  <div class="title">
+    <h1 id="league-name">FPL League Live</h1>
+    <div class="gw">
+      <button type="button" class="icon-btn" id="gw-prev" aria-label="Previous gameweek">‹</button>
+      <span id="gw-label">GW –</span>
+      <button type="button" class="icon-btn" id="gw-next" aria-label="Next gameweek">›</button>
+      <span class="pill" id="gw-status">Loading</span>
+    </div>
+  </div>
+  <div class="controls">
+    <label class="field">Projection
+      <select id="projection">
+        <option value="league">League average</option>
+        <option value="own">Own average</option>
+        <option value="xp">FPL expected pts</option>
+      </select>
+    </label>
+    <label class="field">Sort
+      <select id="sort">
+        <option value="live">Live points</option>
+        <option value="projected">Projected</option>
+        <option value="avg">Avg per player</option>
+        <option value="rank">League rank</option>
+      </select>
+    </label>
+    <button type="button" class="btn" id="compare-btn" aria-pressed="false">Compare</button>
+    <button type="button" class="btn" id="refresh-btn" title="Refresh live scores">Refresh <span id="updated"></span></button>
+    <button type="button" class="btn ghost" id="settings-btn">Settings</button>
+  </div>
+</header>
+
+<div id="banner" class="banner" hidden></div>
+
+<section id="compare-panel" class="compare" hidden></section>
+
+<nav id="strip" class="strip" aria-label="Managers"></nav>
+
+<main id="board" class="board" aria-live="polite"></main>
+
+<details class="legend" id="legend">
+  <summary>Key</summary>
+  <ul>
+    <li><span class="dot done"></span>Finished</li>
+    <li><span class="dot live"></span>Playing now</li>
+    <li><span class="dot upcoming"></span>Yet to play</li>
+    <li><span class="dot dnp"></span>Didn't play</li>
+    <li><span class="prov-mark">+2b?</span>Provisional bonus (from BPS, not yet confirmed)</li>
+    <li><b>C</b> / <b>V</b> captain, vice · <b>↑ ↓</b> automatic sub (projected until the gameweek ends)</li>
+    <li>Projection = points so far + a basis for every match still to come (captain counted at their multiplier), scaled for time left in live matches.</li>
+  </ul>
+</details>
+
+<dialog id="player-dlg" class="dlg"></dialog>
+
+<dialog id="settings-dlg" class="dlg">
+  <form id="settings-form" method="dialog">
+    <h2>Settings</h2>
+    <label class="field stack" for="set-league">League ID
+      <input id="set-league" inputmode="numeric" pattern="[0-9]+" required>
+    </label>
+    <label class="field stack" for="set-api">API proxy URL
+      <input id="set-api" placeholder="./api/">
+      <small>FPL blocks browsers from calling it directly. Use <code>./api/</code> with <code>serve.py</code>, or your Cloudflare Worker URL ending in <code>/api/</code>.</small>
+    </label>
+    <label class="field stack" for="set-me">My team
+      <select id="set-me"><option value="">None</option></select>
+      <small>Highlighted, and used as the first side in Compare.</small>
+    </label>
+    <div class="dlg-actions">
+      <button type="button" class="btn ghost" id="set-demo">Show sample data</button>
+      <span class="spacer"></span>
+      <button type="button" class="btn ghost" id="set-cancel">Cancel</button>
+      <button type="submit" class="btn primary" id="set-save">Save</button>
+    </div>
+  </form>
+</dialog>
+
+<script src="fpl.js"></script>
+<script src="demo.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
