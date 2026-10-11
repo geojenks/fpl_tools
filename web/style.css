@@ -458,6 +458,8 @@ select, input {
   .half.b { border-left: 0; border-top: 2px solid var(--pitch-line); }
   .half.b .half-head { order: 3; justify-content: flex-start; }
   .half.b .half-bench { order: 4; }
+  /* Benches go to the outer ends so the two line-ups meet at halfway. */
+  .half.a .half-bench { order: -1; border-top: 0; padding-top: 0; border-bottom: 1px dashed var(--pitch-line); padding-bottom: 0.45rem; }
   .pitch-cols { flex-direction: column; min-height: 0; }
   .col { flex-direction: row; justify-content: center; }
   .col .card { width: 4.4rem; flex: 0 1 4.4rem; }
