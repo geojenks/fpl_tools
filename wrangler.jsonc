@@ -4,6 +4,8 @@
   "name": "fpl-tools",
   "main": "worker/index.js",
   "compatibility_date": "2025-09-01",
+  // Builds of non-production branches run `wrangler preview`, which needs this block.
+  "previews": {},
   // Request logs, viewable under the Worker's Observability tab.
   "observability": { "enabled": true },
   "assets": {
