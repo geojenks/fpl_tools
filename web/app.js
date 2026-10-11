@@ -72,7 +72,7 @@
 
   // ---------- Data ----------
   class HttpError extends Error {
-    constructor(status, path) { super(`HTTP ${status} for ${path}`); this.status = status; }
+    constructor(status, path, detail) { super(detail ? `${detail}, for ${path}` : `HTTP ${status} for ${path}`); this.status = status; }
   }
   function netSource(base) {
     const root = base.endsWith('/') ? base : base + '/';
@@ -80,7 +80,11 @@
       demo: false,
       async get(path) {
         const r = await fetch(root + path, { cache: 'no-store' });
-        if (!r.ok) throw new HttpError(r.status, path);
+        if (!r.ok) {
+          let detail = '';
+          try { detail = (await r.json()).error || ''; } catch { /* not JSON */ }
+          throw new HttpError(r.status, path, detail);
+        }
         return r.json();
       },
     };
@@ -150,11 +154,15 @@
       const where = source.demo ? 'sample data' : settings.apiBase;
       const notFound = err instanceof HttpError && err.status === 404;
       if (!state.model) renderWelcome();
+      // Only someone running the page from a file or their own machine needs proxy advice.
+      const selfHosted = location.protocol === 'file:' || /^(localhost|127\.|192\.168\.|10\.)/.test(location.hostname);
       showBanner(notFound
         ? `There's no FPL league with ID ${esc(settings.league)}. Check the number in your league's link and try again.`
-        : `Couldn't load league ${esc(settings.league)} from ${esc(where)} (${esc(err.message)}). ` +
-          'FPL only answers through a proxy: run <code>python3 serve.py</code> and open the address it prints, or set your proxy URL in Settings.',
-      true, !notFound);
+        : selfHosted
+          ? `Couldn't load league ${esc(settings.league)} from ${esc(where)} (${esc(err.message)}). ` +
+            'FPL only answers through a proxy: run <code>python3 serve.py</code> and open the address it prints, or set your proxy URL in Settings.'
+          : `Couldn't get scores from FPL just now (${esc(err.message)}). FPL is sometimes down while it updates, especially around deadlines. Try Refresh in a minute.`,
+      true, !notFound && selfHosted);
     } finally {
       state.loading = false;
       $('#refresh-btn').disabled = false;
