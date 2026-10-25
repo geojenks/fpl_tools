@@ -32,6 +32,7 @@
     view: params.get('view') === 'table' ? 'table' : 'week',
     own: { on: false, n: 2, upTo: true }, // fade players not owned by (up to / exactly) n managers
     compare: null, // { a: entryId, b: entryId }
+    matchOpen: {}, // fixture id -> 1 (events) or 2 (full points breakdown); absent = collapsed
     updatedAt: null,
     timer: null,
     loading: false,
@@ -343,8 +344,10 @@
       renderCompare(null, true);
       $('#strip').innerHTML = '';
       renderTable();
+      $('#matches').hidden = true;
       return;
     }
+    renderMatches();
     $('#board').className = 'board';
 
     let teams = sortedTeams();
@@ -742,6 +745,88 @@
   }
   $('#player-dlg').addEventListener('click', (e) => {
     if (e.target.id === 'pd-close' || e.target === $('#player-dlg')) $('#player-dlg').close();
+  });
+
+  // ---------- Matches ----------
+  const dayKey = (iso) => (iso ? new Date(iso).toDateString() : 'tbc');
+  const dayLabel = (iso) => (iso
+    ? new Date(iso).toLocaleDateString([], { weekday: 'long', day: 'numeric', month: 'short' })
+    : 'Date to be confirmed');
+  const clockTime = (iso) => (iso
+    ? new Date(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }) : 'TBC');
+
+  function matchStatusText(m) {
+    if (m.status === 'upcoming') return clockTime(m.kickoff);
+    if (m.status === 'live') return `${m.minute}'`;
+    if (m.status === 'ft') return 'FT';
+    return 'FT';
+  }
+
+  /** Names with ownership: a small figure shows how many league managers have the player. */
+  function eventNames(entries) {
+    return entries.map((e) => `<span class="evp">${esc(e.player.name)}${e.count > 1 ? ` ×${e.count}` : ''}${e.owners ? `<sup class="own-n" title="${e.owners} manager${e.owners === 1 ? '' : 's'} in this league">${e.owners}</sup>` : ''}</span>`).join(', ');
+  }
+
+  function eventsHtml(m) {
+    if (!m.hasEvents) return `<p class="mnote">${m.status === 'upcoming' ? 'Not started.' : 'No goals or cards.'}</p>`;
+    const side = (s, cls) => `<div class="ev-side ${cls}"><h4>${esc(s.team.name)}</h4>${s.events.length
+      ? s.events.map((ev) => `<div class="ev-row"><span class="ev-k ${ev.identifier}">${esc(ev.label)}</span><span class="ev-v">${eventNames(ev.entries)}</span></div>`).join('')
+      : '<p class="mnote">Nothing to show.</p>'}</div>`;
+    return `<div class="ev-grid">${side(m.home, 'h')}${side(m.away, 'a')}</div>`;
+  }
+
+  function breakdownHtml(m) {
+    const line = (l) => {
+      const mult = l.value > 1 && !['minutes', 'bps', 'bonus'].includes(l.identifier) ? ` ×${l.value}` : '';
+      const mark = l.provisional ? '?' : '';
+      return `<span class="bk${l.provisional ? ' prov' : ''}${l.points < 0 ? ' neg' : ''}">${esc(FPL.statShort(l.identifier))}${l.identifier === 'minutes' ? ` ${l.value}'` : mult} <b>${l.points > 0 ? '+' : ''}${l.points}${mark}</b></span>`;
+    };
+    const team = (s, cls) => `<div class="bk-team ${cls}"><h4>${esc(s.team.name)}</h4>${s.rows.length
+      ? s.rows.map((r) => `<div class="pl"><span class="pn">${esc(r.player.name)}<sup class="own-n"${r.owners ? ` title="${r.owners} manager${r.owners === 1 ? '' : 's'} in this league"` : ''}>${r.owners || ''}</sup> <small>${esc(r.player.posName)}</small></span><b class="pp">${r.points}</b><span class="pb">${r.lines.map(line).join('')}</span></div>`).join('')
+      : '<p class="mnote">No points yet.</p>'}</div>`;
+    return `<div class="bk-grid">${team(m.home, 'h')}${team(m.away, 'a')}</div>
+      <p class="mnote">Points as FPL scores them. A violet <b class="prov-mark">?</b> marks bonus that isn't confirmed yet.</p>`;
+  }
+
+  function renderMatches() {
+    const box = $('#matches');
+    const matches = (state.model && state.model.matches) || [];
+    if (!matches.length) { box.hidden = true; return; }
+    const open = state.matchOpen;
+    let day = null;
+    const parts = [`<h2>Matches · GW ${state.gw}</h2>`];
+    for (const m of matches) {
+      const key = dayKey(m.kickoff);
+      if (key !== day) { day = key; parts.push(`<h3 class="mday">${esc(dayLabel(m.kickoff))}</h3>`); }
+      const lvl = open[m.id] || 0;
+      const score = m.status === 'upcoming' ? '<span class="vs">v</span>' : `${m.home.score ?? 0}<span class="dash">–</span>${m.away.score ?? 0}`;
+      const label = `${m.home.team.name} ${m.status === 'upcoming' ? 'v' : `${m.home.score ?? 0} to ${m.away.score ?? 0}`} ${m.away.team.name}`;
+      parts.push(`<article class="match ${m.status}" data-mid="${m.id}">
+        <div class="mrow">
+          <span class="mst">${esc(matchStatusText(m))}${m.status === 'ft' ? '<small>bonus</small>' : ''}</span>
+          <span class="mt h" title="${esc(m.home.team.name)}"><span class="tn-long">${esc(m.home.team.name)}</span><span class="tn-short">${esc(m.home.team.short_name)}</span></span>
+          <span class="msc" aria-label="${esc(label)}">${score}</span>
+          <span class="mt a" title="${esc(m.away.team.name)}"><span class="tn-long">${esc(m.away.team.name)}</span><span class="tn-short">${esc(m.away.team.short_name)}</span></span>
+          <span class="mbtns">
+            <button type="button" class="mt-btn" data-mid="${m.id}" data-lvl="1" aria-pressed="${lvl === 1}" aria-expanded="${lvl >= 1}" aria-controls="md-${m.id}" aria-label="Goals, assists and cards for ${esc(label)}">+</button>
+            <button type="button" class="mt-btn" data-mid="${m.id}" data-lvl="2" aria-pressed="${lvl === 2}" aria-expanded="${lvl === 2}" aria-controls="md-${m.id}" aria-label="Full FPL points breakdown for ${esc(label)}">++</button>
+          </span>
+        </div>
+        ${lvl ? `<div class="mdetail" id="md-${m.id}">${eventsHtml(m)}${lvl === 2 ? breakdownHtml(m) : ''}</div>` : ''}
+      </article>`);
+    }
+    box.innerHTML = parts.join('');
+    box.hidden = false;
+  }
+  // Pressing the active button collapses; pressing the other switches level.
+  $('#matches').addEventListener('click', (e) => {
+    const b = e.target.closest('.mt-btn');
+    if (!b) return;
+    const id = +b.dataset.mid, lvl = +b.dataset.lvl;
+    if (state.matchOpen[id] === lvl) delete state.matchOpen[id]; else state.matchOpen[id] = lvl;
+    renderMatches();
+    const again = document.querySelector(`#matches .mt-btn[data-mid="${id}"][data-lvl="${lvl}"]`);
+    if (again) again.focus();
   });
 
   // ---------- Standings ----------

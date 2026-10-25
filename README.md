@@ -26,6 +26,8 @@ Each row groups the line-up into goalkeeper, defenders, midfielders and forwards
 
 **Only players owned by up to / exactly N managers** fades out everyone else, so you can see each week's differentials. Use up to 1 for unique picks. Each row is tagged with how many such players it has and the points they've brought in so far.
 
+**Matches** lists every fixture of the gameweek below the teams, with live scores for games in progress (the minute, or `FT bonus` while bonus is still being confirmed). Press **+** on a match for its goalscorers, assists, cards and penalties. Press **++** for that plus every player's FPL points broken down by stat, with provisional bonus marked `?`. Small figures beside a name show how many managers in the league have that player in their scoring line-up. Past weeks work the same.
+
 **Standings** shows the season table including this week's live points, with rank movement since last week and a projected total. Use the gameweek arrows to go back through past weeks: both views work for any week this season.
 
 On a phone, the league becomes a compact table at the top. Below it you swipe between managers, each shown as a formation pitch. Tap a name in the table to jump to that manager.

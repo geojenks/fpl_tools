@@ -157,6 +157,7 @@
       f.team_a_score = score.a;
 
       const bps = { h: [], a: [] };
+      const yellows = { h: [], a: [] };
       for (const side of ['h', 'a']) {
         const conceded = side === 'h' ? score.a : score.h;
         for (const e of sides[side]) {
@@ -174,7 +175,7 @@
             if (pos <= 2 && conceded >= 2) add('goals_conceded', conceded, -Math.floor(conceded / 2));
             if (pos === 1) { const sv = Math.floor(r() * 6); add('saves', sv, Math.floor(sv / 3)); }
             if ((pos === 2 && r() < 0.3) || (pos === 3 && r() < 0.15)) add('defensive_contribution', pos === 2 ? 10 : 12, 2);
-            if (r() < 0.1) add('yellow_cards', 1, -1);
+            if (r() < 0.1) { add('yellow_cards', 1, -1); yellows[side].push({ value: 1, element: e.id }); }
             st.bps = (m >= 60 ? 6 : 3) + (goals.get(e.id) || 0) * [0, 12, 12, 18, 24][pos] + (assists.get(e.id) || 0) * 9 +
               (conceded === 0 && pos <= 2 ? 12 : 0) + Math.floor(r() * 14) - (st.yellow_cards ? 3 : 0);
             bps[side].push({ value: st.bps, element: e.id });
@@ -187,6 +188,14 @@
       }
       bps.h.sort((x, y) => y.value - x.value);
       bps.a.sort((x, y) => y.value - x.value);
+      // Match events in the fixtures endpoint's shape: a list of { value, element } per side.
+      const tally = (map) => ({
+        h: sides.h.filter((e) => map.get(e.id)).map((e) => ({ value: map.get(e.id), element: e.id })),
+        a: sides.a.filter((e) => map.get(e.id)).map((e) => ({ value: map.get(e.id), element: e.id })),
+      });
+      f.stats.push({ identifier: 'goals_scored', ...tally(goals) });
+      f.stats.push({ identifier: 'assists', ...tally(assists) });
+      f.stats.push({ identifier: 'yellow_cards', h: yellows.h, a: yellows.a });
       f.stats.push({ identifier: 'bps', h: bps.h, a: bps.a });
 
       if (f.finished) {

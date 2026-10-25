@@ -25,6 +25,15 @@
     bps: 'BPS',
   };
 
+  // Compact labels for the per-match points breakdown.
+  const STAT_SHORT = {
+    minutes: 'Mins', goals_scored: 'Goals', assists: 'Assists', clean_sheets: 'Clean sheet',
+    goals_conceded: 'Conceded', own_goals: 'Own goal', penalties_saved: 'Pen saved',
+    penalties_missed: 'Pen missed', yellow_cards: 'Yellow', red_cards: 'Red', saves: 'Saves',
+    bonus: 'Bonus', defensive_contribution: 'Def. contrib.',
+  };
+  const statShort = (id) => STAT_SHORT[id] || statLabel(id);
+
   function statLabel(id) {
     return STAT_LABELS[id] || id.replace(/_/g, ' ').replace(/^./, (c) => c.toUpperCase());
   }
@@ -115,10 +124,12 @@
         const bonusConfirmed = !!f.finished;
         const fromFpl = bonusConfirmed || fplBonusFixtures.has(f.id);
         let pb = 0;
+        let addedHere = 0;
         if (f.started && !bonusConfirmed) {
           if (fromFpl) pb = apiBonus(lv, f.id);
           else {
             pb = (provBonus.get(f.id) || new Map()).get(id) || 0;
+            addedHere = pb;
             bonusAdded += pb;
           }
           bonusProv += pb;
@@ -136,6 +147,7 @@
           score: f.started ? [f.team_h_score, f.team_a_score] : null,
           bonusConfirmed,
           provBonus: pb,
+          bonusAddedHere: addedHere,
           bps: bpsMap ? bpsMap.get(id) || 0 : null,
           explain: ((lv && lv.explain) || []).find((x) => x.fixture === f.id) || null,
         };
@@ -364,6 +376,84 @@
     return { key: 'between', label: 'In progress' };
   }
 
+  // Match events in the order shown, with the fixture stat each comes from.
+  const EVENT_KINDS = [
+    ['goals_scored', 'Goals'], ['assists', 'Assists'], ['own_goals', 'Own goals'],
+    ['penalties_missed', 'Pens missed'], ['penalties_saved', 'Pens saved'],
+    ['yellow_cards', 'Yellow cards'], ['red_cards', 'Red cards'],
+  ];
+
+  function matchStatus(f) {
+    if (!f.started) return 'upcoming';
+    if (f.finished) return 'final';
+    return f.finished_provisional ? 'ft' : 'live';
+  }
+
+  /**
+   * Every fixture of the gameweek in kick-off order: score and status, goal /
+   * assist / card events per side, and each side's players with their FPL
+   * points broken down by stat (provisional bonus flagged until confirmed).
+   * `ownership` marks how many managers in the league have each player.
+   */
+  function buildMatches(players, fixtures, live, ownership) {
+    const explainBy = new Map();
+    for (const e of live.elements || []) {
+      for (const x of e.explain || []) {
+        if (!explainBy.has(x.fixture)) explainBy.set(x.fixture, []);
+        explainBy.get(x.fixture).push({ id: e.id, stats: x.stats || [] });
+      }
+    }
+    const owners = (id) => (ownership && ownership.get(id)) || 0;
+    const posOrder = (p) => (p.pos >= 1 && p.pos <= 4 ? p.pos : 5);
+
+    return fixtures
+      .slice()
+      .sort((a, b) => String(a.kickoff_time).localeCompare(String(b.kickoff_time)) || a.id - b.id)
+      .map((f) => {
+        const side = (key) => {
+          const teamId = key === 'h' ? f.team_h : f.team_a;
+          const events = [];
+          for (const [identifier, label] of EVENT_KINDS) {
+            const stat = (f.stats || []).find((s) => s.identifier === identifier);
+            const entries = ((stat && stat[key]) || [])
+              .filter((x) => x.value > 0)
+              .map((x) => ({ player: players.player(x.element), count: x.value, owners: owners(x.element) }));
+            if (entries.length) events.push({ identifier, label, entries });
+          }
+          const rows = [];
+          for (const x of explainBy.get(f.id) || []) {
+            const el = players.elements.get(x.id);
+            if (!el || el.team !== teamId) continue;
+            const mins = (x.stats.find((s) => s.identifier === 'minutes') || {}).value || 0;
+            const explained = x.stats.reduce((a, s) => a + (s.points || 0), 0);
+            if (!mins && !explained) continue;
+            const p = players.player(x.id);
+            const fx = p.fixtures.find((q) => q.id === f.id);
+            const provisional = !!(fx && f.started && !fx.bonusConfirmed);
+            const lines = x.stats
+              .filter((s) => s.points || s.identifier === 'minutes')
+              .map((s) => ({ identifier: s.identifier, value: s.value, points: s.points, provisional: provisional && s.identifier === 'bonus' }));
+            const added = fx ? fx.bonusAddedHere : 0;
+            if (added) lines.push({ identifier: 'bonus', value: added, points: added, provisional: true });
+            rows.push({ player: p, minutes: mins, points: explained + added, lines, owners: owners(x.id) });
+          }
+          rows.sort((a, b) => posOrder(a.player) - posOrder(b.player) || b.points - a.points || a.player.name.localeCompare(b.player.name));
+          return { team: players.teams.get(teamId), score: f.started ? (key === 'h' ? f.team_h_score : f.team_a_score) : null, events, rows };
+        };
+        const home = side('h');
+        const away = side('a');
+        return {
+          id: f.id,
+          kickoff: f.kickoff_time,
+          status: matchStatus(f),
+          minute: f.minutes || 0,
+          home,
+          away,
+          hasEvents: home.events.length + away.events.length > 0,
+        };
+      });
+  }
+
   /** Whole-league model for one gameweek. */
   function buildLeague({ bootstrap, fixtures, live, standings, picksByEntry, projection = 'pace' }) {
     const players = buildPlayers({ bootstrap, fixtures, live });
@@ -372,7 +462,11 @@
       .map((e) => buildTeam(e, picksByEntry[e.entry], players.player));
     const leagueAvg = leagueAverage(teams);
     for (const t of teams) t.projected = project(t, projection, leagueAvg);
-    return { teams, leagueAvg, players, status: gameweekStatus(fixtures), projection, ownership: ownership(teams) };
+    const owned = ownership(teams);
+    return {
+      teams, leagueAvg, players, status: gameweekStatus(fixtures), projection, ownership: owned,
+      matches: buildMatches(players, fixtures, live, owned),
+    };
   }
 
   /** How many managers have each player in their scoring line-up. */
@@ -458,7 +552,7 @@
   }
 
   const api = {
-    POS, statLabel, bonusFromBps, buildPlayers, buildTeam, buildLeague, compare,
+    POS, statLabel, statShort, bonusFromBps, buildMatches, buildPlayers, buildTeam, buildLeague, compare,
     projectPlayer, leagueAverage, gameweekStatus, formationOk, fixtureDone,
     ownership, ownedBy, ownedMatch, standingsTable,
   };

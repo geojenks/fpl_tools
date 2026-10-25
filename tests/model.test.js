@@ -185,3 +185,49 @@ test('bonus race table ranks BPS and reports the gap to a bonus place', () => {
   assert.equal(t.gap, 5);
   assert.equal(players.bpsTable(2, 1), null); // match not started
 });
+
+test('matches: status, events and the per-player points breakdown', () => {
+  const w = world();
+  const f = w.fixtures[0];
+  f.stats.push(
+    { identifier: 'goals_scored', h: [{ element: 1, value: 2 }], a: [] },
+    { identifier: 'assists', h: [{ element: 2, value: 1 }], a: [] },
+    { identifier: 'yellow_cards', h: [], a: [{ element: 9, value: 1 }] },
+  );
+  w.live.elements[0].explain = [{ fixture: 1, stats: [
+    { identifier: 'minutes', value: 90, points: 2 },
+    { identifier: 'goals_scored', value: 2, points: 12 },
+  ] }];
+  w.live.elements[1].explain = [{ fixture: 1, stats: [{ identifier: 'minutes', value: 90, points: 2 }] }];
+  w.live.elements[4].explain = [{ fixture: 1, stats: [{ identifier: 'minutes', value: 0, points: 0 }] }]; // didn't play
+  const m = FPL.buildLeague(w);
+  assert.deepEqual(m.matches.map((x) => x.status), ['ft', 'upcoming']); // finished_provisional, then not started
+  const first = m.matches[0];
+  assert.equal(first.hasEvents, true);
+  assert.deepEqual(first.home.events.map((e) => [e.identifier, e.entries[0].player.name, e.entries[0].count]),
+    [['goals_scored', 'P1', 2], ['assists', 'P2', 1]]);
+  assert.equal(first.away.events[0].identifier, 'yellow_cards');
+  assert.equal(first.home.events[0].entries[0].owners, 1); // P1 is in the manager's line-up
+  // Rows: only players who played or scored, with FPL's lines plus our provisional bonus.
+  assert.deepEqual(first.home.rows.map((r) => r.player.name), ['P1', 'P2']);
+  const p1 = first.home.rows[0];
+  assert.equal(p1.points, 2 + 12 + 3);
+  assert.deepEqual(p1.lines.map((l) => [l.identifier, l.points, !!l.provisional]), [['minutes', 2, false], ['goals_scored', 12, false], ['bonus', 3, true]]);
+  assert.equal(first.home.score, 1);
+  assert.equal(m.matches[1].home.score, null);
+});
+
+test('matches: bonus FPL already lists is flagged provisional until the match is final', () => {
+  const w = world();
+  w.live.elements[0].explain = [{ fixture: 1, stats: [
+    { identifier: 'minutes', value: 90, points: 2 },
+    { identifier: 'bonus', value: 3, points: 3 },
+  ] }];
+  const row = FPL.buildLeague(w).matches[0].home.rows[0];
+  assert.equal(row.points, 5); // not added twice
+  assert.equal(row.lines.find((l) => l.identifier === 'bonus').provisional, true);
+  w.fixtures[0].finished = true;
+  const done = FPL.buildLeague(w).matches[0];
+  assert.equal(done.status, 'final');
+  assert.equal(done.home.rows[0].lines.find((l) => l.identifier === 'bonus').provisional, false);
+});
