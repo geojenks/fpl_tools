@@ -65,10 +65,22 @@ The `/api/` responses allow cross-origin requests, so a copy of `web/` hosted el
 - `?demo` shows sample data with made-up scores, so you can check the layout without the API.
 - Scores refresh every minute while matches are live, and whenever you return to the tab.
 
+## Analysis: home vs away
+
+`analysis/home_advantage.py` answers how much more FPL players score at home than away. It downloads ten seasons of player data from the public [vaastav/Fantasy-Premier-League](https://github.com/vaastav/Fantasy-Premier-League) archive (about 1 MB per season, cached after the first run), compares points per appearance, and writes the report to `analysis/home_vs_away.md`:
+
+```sh
+python3 analysis/home_advantage.py                   # all seasons
+python3 analysis/home_advantage.py --min-minutes 60  # only near-full games
+```
+
+It splits the gap by position, player quality and season, and by where the points come from (clean sheets, goals, bonus and so on). It also compares each player with himself, so the result isn't just down to who plays at home. Standard library only.
+
 ## Development
 
 ```sh
 node --test tests/*.test.js
+python3 -m unittest discover -s tests -p "test_*.py"   # the analysis script
 ```
 
 | File | What it does |
