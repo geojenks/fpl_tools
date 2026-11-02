@@ -40,6 +40,18 @@
 
   const fixtureDone = (f) => !!(f.finished || f.finished_provisional);
 
+  // FPL's own `finished` flag can stay false for days after a match (GW9 of
+  // 2026-27 still showed false two days on), and its data carries the bonus from
+  // full time with no "confirmed" marker. So bonus counts as confirmed once the
+  // match has reached full time and this long has passed since kick-off (about
+  // 1h50 of play, plus FPL's usual hour to confirm bonus, plus a margin).
+  const BONUS_CONFIRM_MS = 3.5 * 3600e3;
+  function bonusFinal(f, now) {
+    if (f.finished) return true;
+    if (!f.finished_provisional || !f.kickoff_time) return false;
+    return now - Date.parse(f.kickoff_time) >= BONUS_CONFIRM_MS;
+  }
+
   /**
    * FPL bonus from BPS: rank 1/2/3 get 3/2/1. A player's rank is one more
    * than the number of players with strictly more BPS, which reproduces the
@@ -70,7 +82,7 @@
   }
 
   /** Build lookups and a per-player live view for one gameweek. */
-  function buildPlayers({ bootstrap, fixtures, live }) {
+  function buildPlayers({ bootstrap, fixtures, live, now = Date.now() }) {
     const elements = new Map(bootstrap.elements.map((e) => [e.id, e]));
     const teams = new Map(bootstrap.teams.map((t) => [t.id, t]));
     const liveById = new Map((live.elements || []).map((e) => [e.id, e]));
@@ -121,7 +133,7 @@
       const fx = (fixturesByTeam.get(el.team) || []).map((f) => {
         const home = f.team_h === el.team;
         const done = fixtureDone(f);
-        const bonusConfirmed = !!f.finished;
+        const bonusConfirmed = bonusFinal(f, now);
         const fromFpl = bonusConfirmed || fplBonusFixtures.has(f.id);
         let pb = 0;
         let addedHere = 0;
@@ -210,7 +222,7 @@
       };
     }
 
-    return { player, elements, teams, bpsTable };
+    return { player, elements, teams, bpsTable, now };
   }
 
   const isGk = (p) => p.pos === 1;
@@ -367,10 +379,10 @@
     return n ? pts / n : null;
   }
 
-  function gameweekStatus(fixtures) {
+  function gameweekStatus(fixtures, now = Date.now()) {
     if (!fixtures.length) return { key: 'none', label: 'No fixtures' };
     if (!fixtures.some((f) => f.started)) return { key: 'upcoming', label: 'Not started' };
-    if (fixtures.every((f) => f.finished)) return { key: 'final', label: 'Final' };
+    if (fixtures.every((f) => bonusFinal(f, now))) return { key: 'final', label: 'Final' };
     if (fixtures.every(fixtureDone)) return { key: 'bonus', label: 'Bonus pending' };
     if (fixtures.some((f) => f.started && !fixtureDone(f))) return { key: 'live', label: 'Live' };
     return { key: 'between', label: 'In progress' };
@@ -383,9 +395,9 @@
     ['yellow_cards', 'Yellow cards'], ['red_cards', 'Red cards'],
   ];
 
-  function matchStatus(f) {
+  function matchStatus(f, now) {
     if (!f.started) return 'upcoming';
-    if (f.finished) return 'final';
+    if (bonusFinal(f, now)) return 'final';
     return f.finished_provisional ? 'ft' : 'live';
   }
 
@@ -445,7 +457,7 @@
         return {
           id: f.id,
           kickoff: f.kickoff_time,
-          status: matchStatus(f),
+          status: matchStatus(f, players.now),
           minute: f.minutes || 0,
           home,
           away,
@@ -455,8 +467,8 @@
   }
 
   /** Whole-league model for one gameweek. */
-  function buildLeague({ bootstrap, fixtures, live, standings, picksByEntry, projection = 'pace' }) {
-    const players = buildPlayers({ bootstrap, fixtures, live });
+  function buildLeague({ bootstrap, fixtures, live, standings, picksByEntry, projection = 'pace', now = Date.now() }) {
+    const players = buildPlayers({ bootstrap, fixtures, live, now });
     const teams = standings
       .filter((e) => picksByEntry[e.entry])
       .map((e) => buildTeam(e, picksByEntry[e.entry], players.player));
@@ -464,7 +476,7 @@
     for (const t of teams) t.projected = project(t, projection, leagueAvg);
     const owned = ownership(teams);
     return {
-      teams, leagueAvg, players, status: gameweekStatus(fixtures), projection, ownership: owned,
+      teams, leagueAvg, players, status: gameweekStatus(fixtures, now), projection, ownership: owned,
       matches: buildMatches(players, fixtures, live, owned),
     };
   }
@@ -551,8 +563,58 @@
     }
   }
 
+  // ---- Saved leagues ("My leagues") and a team's leagues -------------------
+
+  /** A team ID from a bare number or any FPL team link (…/entry/123456/…). '' if none. */
+  function parseTeamId(text) {
+    const t = String(text || '').trim();
+    const m = t.match(/entry\/(\d+)/i) || t.match(/^(\d{1,9})$/);
+    return m ? m[1] : '';
+  }
+
+  /** Add (or rename) a league in a saved list. IDs are strings; the list never exceeds `max`. */
+  function addLeague(list, league, max = 30) {
+    const id = String(league.id);
+    const name = String(league.name || `League ${id}`);
+    const out = list.filter((l) => String(l.id) !== id).concat({ id, name });
+    return out.slice(-max);
+  }
+
+  function removeLeague(list, id) {
+    return list.filter((l) => String(l.id) !== String(id));
+  }
+
+  /**
+   * Read FPL's entry/{id}/ response: the team and the private leagues it is in.
+   * Official leagues (Overall, country, club, gameweek) have league_type 's' and
+   * are left out, since their standings are huge and not what a mini-league
+   * viewer is for.
+   */
+  function entryLeagues(entry) {
+    const leagues = [];
+    const take = (list, kind) => {
+      for (const l of list || []) {
+        if (l.league_type === 's') continue;
+        leagues.push({
+          id: String(l.id), name: l.name, kind,
+          rank: l.entry_rank != null ? l.entry_rank : null,
+          lastRank: l.entry_last_rank != null ? l.entry_last_rank : null,
+          size: l.rank_count != null ? l.rank_count : null,
+        });
+      }
+    };
+    const l = entry.leagues || {};
+    take(l.classic, 'classic');
+    take(l.h2h, 'h2h');
+    return {
+      team: { id: String(entry.id), name: entry.name, manager: [entry.player_first_name, entry.player_last_name].filter(Boolean).join(' ') },
+      leagues,
+    };
+  }
+
   const api = {
-    POS, statLabel, statShort, bonusFromBps, buildMatches, buildPlayers, buildTeam, buildLeague, compare,
+    parseTeamId, addLeague, removeLeague, entryLeagues,
+    POS, statLabel, statShort, bonusFinal, bonusFromBps, buildMatches, buildPlayers, buildTeam, buildLeague, compare,
     projectPlayer, leagueAverage, gameweekStatus, formationOk, fixtureDone,
     ownership, ownedBy, ownedMatch, standingsTable,
   };

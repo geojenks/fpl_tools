@@ -16,7 +16,7 @@ The official app shows one team at a time and a single total, which is misleadin
 
 Each manager is one row: the starting 11 from goalkeeper to forwards, then the bench. Click a player to see where their points came from, match by match. For a match whose bonus isn't confirmed yet, a **bonus race** table shows the live BPS ranking: who holds the 3, 2 and 1 bonus points right now, and how many BPS a player is short of a bonus place.
 
-Bonus is taken from FPL's own live data when it already lists it for the match (FPL may add it provisionally during play), and worked out from the match's BPS ranking when it doesn't. Either way it is never counted twice, and it is marked `+3b?` until the match's bonus is confirmed.
+Bonus is taken from FPL's own live data when it already lists it for the match (FPL adds it provisionally from full time), and worked out from the match's BPS ranking when it doesn't. Either way it is never counted twice. FPL's `finished` flag can stay false for days and its data has no "bonus confirmed" marker, so bonus is shown as `+3b?` until the match has reached full time and about 3½ hours have passed since kick-off, then it counts as confirmed.
 
 Automatic substitutions and vice-captain promotion are projected as soon as they're certain, marked ↑ ↓. If the next bench player hasn't played yet, the sub is shown as pending (`sub?`).
 
@@ -61,7 +61,9 @@ The `/api/` responses allow cross-origin requests, so a copy of `web/` hosted el
 - The league is part of the link: `?league=246924`. Share that to go straight to your league.
 - Without `?league=`, the page offers a search box. A friend can enter their own league ID or paste their league's link from the FPL site. The search box in the header is always there for switching leagues.
 - The address also keeps the week and view, e.g. `?league=246924&gw=5&view=table`.
-- *My team* (in Settings) highlights your row and makes you side A in Compare. It's remembered for each league.
+- **My leagues**: press **☆ Save league** next to the league name to keep it. The dropdown in the header then switches between your saved leagues in one step, and the star un-saves the league you're viewing. The list is stored in your browser, so it's per device.
+- **A team's leagues**: click a team name in the week view, or choose **Add or find leagues…** in the dropdown, to see the private leagues that team is in, with its rank in each. Open or save any of them. You can also look up a team by its ID or link (the number after `/entry/` on the FPL site). Official leagues such as Overall and your country are left out.
+- *My team* (in Settings) highlights your row and makes you side A in Compare. It's remembered for each league, and the dialog uses it to pre-load your own leagues.
 - `?demo` shows sample data with made-up scores, so you can check the layout without the API.
 - Scores refresh every minute while matches are live, and whenever you return to the tab.
 

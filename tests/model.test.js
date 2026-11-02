@@ -39,7 +39,8 @@ function world({ minutes = {}, points = {}, chip = null, captain = 1, vice = 2 }
       is_captain: e.id === captain, is_vice_captain: e.id === vice,
     })),
   };
-  return { bootstrap: { teams, elements, events: [] }, fixtures, live, standings: [{ entry: 9, player_name: 'X', entry_name: 'Y', rank: 1 }], picksByEntry: { 9: picks } };
+  // 2.5h after kick-off: full time, bonus not yet confirmed.
+  return { now: Date.parse('2026-10-10T16:30:00Z'), bootstrap: { teams, elements, events: [] }, fixtures, live, standings: [{ entry: 9, player_name: 'X', entry_name: 'Y', rank: 1 }], picksByEntry: { 9: picks } };
 }
 
 test('provisional bonus is added and flagged until the fixture is confirmed', () => {
@@ -230,4 +231,62 @@ test('matches: bonus FPL already lists is flagged provisional until the match is
   const done = FPL.buildLeague(w).matches[0];
   assert.equal(done.status, 'final');
   assert.equal(done.home.rows[0].lines.find((l) => l.identifier === 'bonus').provisional, false);
+});
+
+test('bonus counts as confirmed once the match is over and enough time has passed', () => {
+  const w = world();
+  const at = (iso) => FPL.buildLeague({ ...w, now: Date.parse(iso) });
+  // 2.5h after kick-off: still provisional (FPL's `finished` is false, as it can stay for days).
+  let m = at('2026-10-10T16:30:00Z');
+  assert.equal(m.players.player(1).provisional, true);
+  assert.equal(m.matches[0].status, 'ft');
+  assert.equal(m.status.key, 'between'); // one match awaits bonus, the other hasn't started
+  // Four hours after kick-off, with FPL's flag still false: confirmed, so no provisional marker.
+  m = at('2026-10-10T18:00:00Z');
+  const p1 = m.players.player(1);
+  assert.equal(p1.provisional, false);
+  assert.equal(p1.bonusProv, 0);
+  assert.equal(m.matches[0].status, 'final');
+  // A match that hasn't reached full time is never confirmed, however long since kick-off.
+  w.fixtures[0].finished_provisional = false;
+  assert.equal(FPL.bonusFinal(w.fixtures[0], Date.parse('2026-10-12T00:00:00Z')), false);
+  assert.equal(FPL.bonusFinal({ finished: true }, 0), true);
+});
+
+test('saved leagues: add, rename, dedupe, remove, cap', () => {
+  let list = FPL.addLeague([], { id: 246924, name: 'The Lads' });
+  list = FPL.addLeague(list, { id: '111', name: 'Work' });
+  assert.deepEqual(list, [{ id: '246924', name: 'The Lads' }, { id: '111', name: 'Work' }]);
+  list = FPL.addLeague(list, { id: '246924', name: 'The Lads 2026' }); // renamed, moved to the end
+  assert.deepEqual(list.map((l) => l.name), ['Work', 'The Lads 2026']);
+  assert.deepEqual(FPL.removeLeague(list, 111).map((l) => l.id), ['246924']);
+  assert.equal(FPL.addLeague([], { id: 5 }).at(0).name, 'League 5'); // unnamed fallback
+  const many = Array.from({ length: 40 }, (_, i) => ({ id: String(i), name: 'x' }));
+  assert.equal(many.reduce((acc, l) => FPL.addLeague(acc, l, 30), []).length, 30);
+});
+
+test('team IDs parse from numbers and FPL links', () => {
+  assert.equal(FPL.parseTeamId('123456'), '123456');
+  assert.equal(FPL.parseTeamId(' https://fantasy.premierleague.com/entry/123456/event/9 '), '123456');
+  assert.equal(FPL.parseTeamId('fantasy.premierleague.com/entry/42/history'), '42');
+  assert.equal(FPL.parseTeamId('hello'), '');
+  assert.equal(FPL.parseTeamId(''), '');
+});
+
+test("a team's leagues skip official leagues and keep rank and size", () => {
+  const entry = {
+    id: 7, name: 'Team Seven', player_first_name: 'Sam', player_last_name: 'Seven',
+    leagues: {
+      classic: [
+        { id: 314, name: 'Overall', league_type: 's', entry_rank: 4000000, rank_count: 9000000 },
+        { id: 246924, name: 'The Lads', league_type: 'x', entry_rank: 1, entry_last_rank: 2, rank_count: 6 },
+      ],
+      h2h: [{ id: 99, name: 'Head to head', league_type: 'x', entry_rank: 3, rank_count: 8 }],
+    },
+  };
+  const r = FPL.entryLeagues(entry);
+  assert.deepEqual(r.team, { id: '7', name: 'Team Seven', manager: 'Sam Seven' });
+  assert.deepEqual(r.leagues.map((l) => [l.id, l.kind, l.rank, l.lastRank, l.size]),
+    [['246924', 'classic', 1, 2, 6], ['99', 'h2h', 3, null, 8]]);
+  assert.deepEqual(FPL.entryLeagues({ id: 1, name: 'x' }).leagues, []); // no leagues block
 });

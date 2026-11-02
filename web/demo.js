@@ -119,7 +119,8 @@
       const elapsed = gw < CURRENT ? 90 : liveElapsed;
       const f = {
         id: 1000 + i, event: gw, team_h: teamId[h], team_a: teamId[a],
-        kickoff_time: new Date(now + (state === 'upcoming' ? (i - 6) * 2.5 * hour : state === 'live' ? -(elapsed + 15) * 60e3 : -(9 - i) * hour)).toISOString(),
+        kickoff_time: new Date(now + (state === 'upcoming' ? (i - 6) * 2.5 * hour : state === 'live' ? -(elapsed + 15) * 60e3
+          : state === 'bonus' ? -2 * hour : -(9 - i) * hour)).toISOString(),
         started: state !== 'upcoming', finished: state === 'final', finished_provisional: state === 'final' || state === 'bonus',
         minutes: state === 'live' ? elapsed : state === 'upcoming' ? 0 : 90,
         team_h_score: null, team_a_score: null, stats: [],
@@ -273,6 +274,8 @@
     return { minutes: 0, goals_scored: 0, assists: 0, clean_sheets: 0, goals_conceded: 0, saves: 0, bonus: 0, bps: 0, total_points: 0 };
   }
 
+  const DEMO_LEAGUES = { 1001: 'Sample League', 1002: 'Office League', 1003: 'Five-a-side Friends' };
+
   /** Answer API paths from the sample data, as the network source would. */
   function source() {
     const weeks = new Map();
@@ -286,7 +289,24 @@
       async get(path) {
         const d = week(CURRENT);
         if (path.startsWith('bootstrap-static')) return d.bootstrap;
-        if (path.startsWith('leagues-classic')) return d.league;
+        const lg = path.match(/^leagues-classic\/(\d*)\//);
+        if (lg) return { ...d.league, league: { ...d.league.league, id: +lg[1] || 0, name: DEMO_LEAGUES[lg[1]] || 'Sample League' } };
+        const en = path.match(/^entry\/(\d+)\/$/);
+        if (en && d.history[en[1]]) {
+          const me = d.league.standings.results.find((r) => String(r.entry) === en[1]);
+          const [first, ...rest] = me.player_name.split(' ');
+          const mine = (id, rank) => ({ id: +id, name: DEMO_LEAGUES[id], league_type: 'x', entry_rank: rank, entry_last_rank: rank + 1, rank_count: 6 });
+          return {
+            id: +en[1], name: me.entry_name, player_first_name: first, player_last_name: rest.join(' '),
+            leagues: {
+              classic: [
+                { id: 314, name: 'Overall', league_type: 's', entry_rank: 2100000, rank_count: 11000000 },
+                mine(1001, me.rank), mine(1002, 1 + (me.rank % 5)), mine(1003, 1 + ((me.rank + 2) % 6)),
+              ],
+              h2h: [],
+            },
+          };
+        }
         let m = path.match(/^fixtures\/\?event=(\d+)/);
         if (m) return week(m[1]).fixtures;
         m = path.match(/^event\/(\d+)\/live/);

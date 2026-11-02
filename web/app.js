@@ -33,6 +33,7 @@
     own: { on: false, n: 2, upTo: true }, // fade players not owned by (up to / exactly) n managers
     compare: null, // { a: entryId, b: entryId }
     matchOpen: {}, // fixture id -> 1 (events) or 2 (full points breakdown); absent = collapsed
+    entryCache: {}, // team id -> { team, leagues } from FPL's entry endpoint
     updatedAt: null,
     timer: null,
     loading: false,
@@ -150,6 +151,7 @@
       raw.live = live;
       state.updatedAt = new Date();
       if (!state.demo) store.set('lastLeague', settings.league);
+      refreshSavedName();
       updateUrl();
       rebuild();
       clearBanner();
@@ -224,10 +226,12 @@
     load({ full: true });
   }
 
-  function openLeague(id) {
+  function openLeague(id, { stayInDemo = false } = {}) {
     settings.league = id;
-    state.demo = false;
-    source = netSource(settings.apiBase);
+    if (!(stayInDemo && state.demo)) {
+      state.demo = false;
+      source = netSource(settings.apiBase);
+    }
     state.gw = null;
     state.compare = null;
     state.raw = emptyRaw();
@@ -270,6 +274,7 @@
 
   function renderWelcome() {
     clearBanner();
+    renderLeagueControls();
     document.body.classList.add('welcome-mode');
     $('#league-name').textContent = 'FPL League Live';
     $('#gw-label').textContent = 'GW –';
@@ -314,6 +319,7 @@
     const m = state.model;
     if (!m) return;
     const r = state.raw;
+    renderLeagueControls();
     $('#league-name').textContent = r.leagueName || 'FPL League Live';
     document.title = (r.leagueName ? r.leagueName + ' · ' : '') + `GW${state.gw} live`;
     $('#gw-label').textContent = `GW ${state.gw}`;
@@ -415,7 +421,7 @@
 
     return `<article class="row${isMe ? ' me' : ''}" id="m-${e.entry}" data-entry="${e.entry}">
       <div class="sum">
-        <div class="who"><span class="rank">${rank}</span><b title="${esc(e.entry_name)}">${esc(e.entry_name)}</b><small title="${esc(e.player_name)}">${esc(e.player_name)}</small><span class="fm" title="Formation">${formation(lines)}</span></div>
+        <div class="who"><span class="rank">${rank}</span><b class="who-link" data-leagues="${e.entry}" role="button" tabindex="0" title="${esc(e.entry_name)} · see the leagues this team is in">${esc(e.entry_name)}</b><small title="${esc(e.player_name)}">${esc(e.player_name)}</small><span class="fm" title="Formation">${formation(lines)}</span></div>
         <div class="scoreline">
           <span class="total${t.provisional ? ' prov' : ''}" title="${t.provisional ? 'Includes points not yet final' : 'Live points'}">${t.live}</span>
           <span class="proj" title="${esc(projTitle(t))}">proj <b>${projText(t.projected)}</b></span>
@@ -747,6 +753,135 @@
     if (e.target.id === 'pd-close' || e.target === $('#player-dlg')) $('#player-dlg').close();
   });
 
+  // ---------- My leagues ----------
+  // Saved leagues live in this browser. Sample data keeps its own list so it never mixes with yours.
+  const leaguesKey = () => (state.demo ? 'myLeaguesDemo' : 'myLeagues');
+  const savedLeagues = () => store.get(leaguesKey(), []);
+  const isSaved = (id) => savedLeagues().some((l) => String(l.id) === String(id));
+  const writeSaved = (list) => { store.set(leaguesKey(), list); renderLeagueControls(); };
+  const saveLeague = (l) => writeSaved(FPL.addLeague(savedLeagues(), l));
+  const unsaveLeague = (id) => writeSaved(FPL.removeLeague(savedLeagues(), id));
+  const currentLeague = () => (state.model && settings.league ? { id: String(settings.league), name: state.raw.leagueName } : null);
+
+  /** Keep a saved league's name current after FPL's name for it changes. */
+  function refreshSavedName() {
+    const cur = currentLeague();
+    if (cur && cur.name && savedLeagues().some((l) => l.id === cur.id && l.name !== cur.name)) {
+      store.set(leaguesKey(), savedLeagues().map((l) => (l.id === cur.id ? { ...l, name: cur.name } : l)));
+    }
+  }
+
+  function renderLeagueControls() {
+    const saved = savedLeagues();
+    const cur = currentLeague();
+    const sw = $('#league-switch');
+    const here = cur && isSaved(cur.id) ? cur.id : '';
+    sw.innerHTML = `<option value="">My leagues${saved.length ? ` (${saved.length})` : ''}</option>` +
+      saved.map((l) => `<option value="${esc(l.id)}"${l.id === here ? ' selected' : ''}>${esc(l.name)}</option>`).join('') +
+      '<option value="@manage">Add or find leagues…</option>';
+    sw.value = here;
+    const star = $('#star-btn');
+    star.hidden = !cur;
+    const on = !!cur && isSaved(cur.id);
+    star.textContent = on ? '★ Saved' : '☆ Save league';
+    star.setAttribute('aria-pressed', String(on));
+    star.title = on ? 'Remove this league from My leagues' : 'Add this league to My leagues';
+    if ($('#leagues-dlg').open) renderSavedList();
+  }
+
+  $('#league-switch').addEventListener('change', (e) => {
+    const v = e.target.value;
+    if (v === '@manage') { renderLeagueControls(); openLeaguesDialog(); return; }
+    if (v && v !== String(settings.league)) openLeague(v, { stayInDemo: true });
+    else renderLeagueControls();
+  });
+  $('#star-btn').addEventListener('click', () => {
+    const cur = currentLeague();
+    if (!cur) return;
+    if (isSaved(cur.id)) unsaveLeague(cur.id); else saveLeague(cur);
+  });
+
+  function renderSavedList() {
+    const cur = settings.league ? String(settings.league) : '';
+    const saved = savedLeagues();
+    $('#ld-saved').innerHTML = saved.length
+      ? `<ul class="lg-list">${saved.map((l) => `<li class="lg saved${l.id === cur ? ' current' : ''}">
+          <button type="button" class="lg-main" data-open="${esc(l.id)}"><b>${esc(l.name)}</b><small>#${esc(l.id)}${l.id === cur ? ' · viewing now' : ''}</small></button>
+          <button type="button" class="btn ghost sm" data-remove="${esc(l.id)}" aria-label="Remove ${esc(l.name)} from My leagues">Remove</button>
+        </li>`).join('')}</ul>`
+      : '<p class="mnote">Nothing saved yet. Open a league and press “Save league”, or find your leagues below.</p>';
+  }
+
+  function renderFound(data) {
+    const { team, leagues } = data;
+    const cur = settings.league ? String(settings.league) : '';
+    const kind = { classic: 'Classic', h2h: 'Head-to-head' };
+    $('#ld-found').innerHTML = `<h4 class="ld-team-h">${esc(team.name)}${team.manager ? ` <small>${esc(team.manager)}</small>` : ''}</h4>` + (leagues.length
+      ? `<ul class="lg-list">${leagues.map((l) => `<li class="lg${l.id === cur ? ' current' : ''}">
+          <span class="lg-main"><b>${esc(l.name)}</b><small>${l.rank != null ? `${l.rank}${l.size ? ` of ${l.size}` : ''} · ` : ''}${kind[l.kind]} · #${esc(l.id)}</small></span>
+          <span class="lg-actions">
+            <button type="button" class="btn sm" data-open="${esc(l.id)}">${l.id === cur ? 'Viewing' : 'Open'}</button>
+            <button type="button" class="btn sm" data-save="${esc(l.id)}" data-name="${esc(l.name)}" aria-pressed="${isSaved(l.id)}">${isSaved(l.id) ? '★ Saved' : '☆ Save'}</button>
+          </span></li>`).join('')}</ul>`
+      : '<p class="mnote">No private leagues found for this team.</p>');
+  }
+
+  async function lookupTeam(raw) {
+    const id = FPL.parseTeamId(raw);
+    const out = $('#ld-found');
+    if (!id) { out.innerHTML = '<p class="mnote err">Enter a team ID (just the number) or paste a team link from the FPL site.</p>'; return; }
+    out.innerHTML = '<p class="mnote">Looking up leagues…</p>';
+    try {
+      if (!state.entryCache[id]) state.entryCache[id] = FPL.entryLeagues(await source.get(`entry/${id}/`));
+      renderFound(state.entryCache[id]);
+    } catch (err) {
+      out.innerHTML = `<p class="mnote err">${err.status === 404 ? `There's no FPL team with ID ${esc(id)}.` : `Couldn't look that team up (${esc(err.message)}).`}</p>`;
+    }
+  }
+
+  /** Open the dialog; with a team ID it shows that team's leagues, else your own team's if known. */
+  function openLeaguesDialog(entryId) {
+    renderSavedList();
+    const teams = (state.model && state.model.teams) || [];
+    $('#ld-pick').innerHTML = '<option value="">Choose a team…</option>' +
+      teams.map((t) => `<option value="${t.entry.entry}"${String(t.entry.entry) === String(entryId) ? ' selected' : ''}>${esc(t.entry.entry_name)} · ${esc(t.entry.player_name)}</option>`).join('');
+    const id = entryId ? String(entryId) : store.get('myEntry', '');
+    $('#ld-team').value = id || '';
+    $('#ld-found').innerHTML = '';
+    const dlg = $('#leagues-dlg');
+    if (dlg.showModal) dlg.showModal(); else dlg.setAttribute('open', '');
+    if (id) lookupTeam(id);
+  }
+
+  $('#ld-pick').addEventListener('change', (e) => { if (e.target.value) { $('#ld-team').value = e.target.value; lookupTeam(e.target.value); } });
+  $('#ld-team-form').addEventListener('submit', (e) => { e.preventDefault(); $('#ld-pick').value = ''; lookupTeam($('#ld-team').value); });
+  $('#ld-close').addEventListener('click', () => $('#leagues-dlg').close());
+  $('#leagues-dlg').addEventListener('click', (e) => {
+    if (e.target === $('#leagues-dlg')) { $('#leagues-dlg').close(); return; }
+    const open = e.target.closest('[data-open]');
+    if (open) {
+      $('#leagues-dlg').close();
+      if (open.dataset.open !== String(settings.league)) openLeague(open.dataset.open, { stayInDemo: true });
+      return;
+    }
+    const rm = e.target.closest('[data-remove]');
+    if (rm) { unsaveLeague(rm.dataset.remove); renderSavedList(); return; }
+    const sv = e.target.closest('[data-save]');
+    if (sv) {
+      if (isSaved(sv.dataset.save)) unsaveLeague(sv.dataset.save); else saveLeague({ id: sv.dataset.save, name: sv.dataset.name });
+      const id = FPL.parseTeamId($('#ld-team').value);
+      if (state.entryCache[id]) renderFound(state.entryCache[id]);
+    }
+  });
+
+  // A manager's name in a row opens the leagues that team is in.
+  const openManagerLeagues = (el) => openLeaguesDialog(el.dataset.leagues);
+  $('#board').addEventListener('click', (e) => { const t = e.target.closest('[data-leagues]'); if (t) openManagerLeagues(t); });
+  $('#board').addEventListener('keydown', (e) => {
+    const t = e.target.closest && e.target.closest('[data-leagues]');
+    if (t && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); openManagerLeagues(t); }
+  });
+
   // ---------- Matches ----------
   const dayKey = (iso) => (iso ? new Date(iso).toDateString() : 'tbc');
   const dayLabel = (iso) => (iso
@@ -904,6 +1039,7 @@
     const changedSource = api !== settings.apiBase;
     settings.apiBase = api;
     settings.me = $('#set-me').value;
+    if (settings.me) store.set('myEntry', settings.me); // remembered across leagues
     store.set('apiBase', api);
     $('#settings-dlg').close();
     if (changedSource && !state.demo && settings.league) openLeague(settings.league);

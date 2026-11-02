@@ -13,6 +13,7 @@
 <header class="top">
   <div class="title">
     <h1 id="league-name">FPL League Live</h1>
+    <button type="button" class="btn star-btn" id="star-btn" aria-pressed="false" hidden>☆ Save league</button>
     <div class="gw">
       <button type="button" class="icon-btn" id="gw-prev" aria-label="Previous gameweek">‹</button>
       <span id="gw-label">GW –</span>
@@ -24,10 +25,13 @@
       <button type="button" role="tab" id="tab-table" aria-selected="false">Standings</button>
     </div>
   </div>
+  <div class="header-right">
+  <select id="league-switch" class="league-switch" aria-label="My leagues"></select>
   <form class="league-form search" role="search">
     <input type="search" name="league" id="league-search" placeholder="League ID or link" aria-label="League ID or FPL league link" autocomplete="off">
     <button type="submit" class="btn">Open</button>
   </form>
+  </div>
 </header>
 
 <div class="toolbar" id="toolbar">
@@ -88,6 +92,37 @@
 </details>
 
 <dialog id="player-dlg" class="dlg"></dialog>
+
+<dialog id="leagues-dlg" class="dlg">
+  <div class="ld">
+    <div class="pd-head">
+      <h2>My leagues</h2>
+      <button type="button" class="btn ghost pd-close" id="ld-close">Close</button>
+    </div>
+    <section aria-labelledby="ld-saved-h">
+      <h3 id="ld-saved-h">Saved on this device</h3>
+      <div id="ld-saved"></div>
+    </section>
+    <section aria-labelledby="ld-find-h">
+      <h3 id="ld-find-h">Find the leagues a team is in</h3>
+      <div class="ld-find">
+        <label class="field stack" for="ld-pick">A team in the current league
+          <select id="ld-pick"></select>
+        </label>
+        <form id="ld-team-form" class="league-form-team">
+          <label class="field stack" for="ld-team">Or any team's ID or link
+            <span class="welcome-row">
+              <input id="ld-team" inputmode="url" autocomplete="off" placeholder="e.g. 123456">
+              <button type="submit" class="btn">Find</button>
+            </span>
+          </label>
+        </form>
+      </div>
+      <p class="mnote">Your team's ID is the number after <code>/entry/</code> in the address of your team page on the FPL site. Only private leagues are listed.</p>
+      <div id="ld-found" aria-live="polite"></div>
+    </section>
+  </div>
+</dialog>
 
 <dialog id="settings-dlg" class="dlg">
   <form id="settings-form" method="dialog">
