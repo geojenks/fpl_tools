@@ -20,6 +20,8 @@ Bonus is taken from FPL's own live data when it already lists it for the match (
 
 Automatic substitutions and vice-captain promotion are projected as soon as they're certain, marked ↑ ↓. If the next bench player hasn't played yet, the sub is shown as pending (`sub?`).
 
+**Chips**: between each manager's summary and their team there's a small block for Wildcard, Free Hit, Bench Boost and Triple Captain (WC, FH, BB, TC). A **green outline** means the chip is being played this week, **plain** means it's still to use, and **greyed** means it's already been used (the week is in the tooltip, and shown on phones). FPL gives every chip once in each half of the season, so they all come back in GW20. It's worked out for the week on show, so going back a week shows what was left then. The season's chips come from FPL itself, so it adapts if the rules change.
+
 Each row groups the line-up into goalkeeper, defenders, midfielders and forwards, with the formation (e.g. `4-4-2`) next to the manager's name. Players still to play have a dotted outline.
 
 **Compare** picks two managers and lines their teams up facing each other on a pitch. A player is crossed off when the other manager has him at the same or a higher multiplier, so he cancels out. If only one of them captains him, he isn't crossed off on that side and is tagged with the net multiplier (e.g. `net ×1`). Below the pitch, each side's edge is listed: players you want to score and players you want to blank, with what's still to play first. A one-line summary says who leads and what the trailing manager needs.

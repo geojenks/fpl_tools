@@ -51,25 +51,31 @@
 
   // Starting XI in formation order, then bench (GK first). Names must be unique in PLAYERS.
   const MANAGERS = [
-    { name: 'Alex Harper', team: 'Haaland Globetrotters', cap: 'Haaland', vice: 'Salah',
+    { name: 'Alex Harper', team: 'Haaland Globetrotters', cap: 'Haaland', vice: 'Salah', chips: [['wildcard', 4]],
       squad: ['Raya', 'Gabriel', 'Van Dijk', 'Cucurella', 'Salah', 'Saka', 'Palmer', 'Semenyo', 'Haaland', 'João Pedro', 'Wood',
         'Kelleher', 'Mbeumo', 'Muñoz', 'Calvert-Lewin'] },
-    { name: 'Priya Shah', team: 'Saka Potatoes', cap: 'Saka', vice: 'Haaland', hits: 4,
+    { name: 'Priya Shah', team: 'Saka Potatoes', cap: 'Saka', vice: 'Haaland', hits: 4, chips: [['3xc', 3], ['freehit', 6]],
       squad: ['Pope', 'Saliba', 'Gvardiol', 'Porro', 'Robinson', 'Saka', 'Salah', 'B.Fernandes', 'Gordon', 'Haaland', 'Watkins',
         'Sels', 'Ndiaye', 'Burn', 'Isidor'] },
-    { name: 'Tom Reilly', team: 'Palmer Violets', cap: 'Haaland', vice: 'Palmer', chip: '3xc',
+    { name: 'Tom Reilly', team: 'Palmer Violets', cap: 'Haaland', vice: 'Palmer', chips: [['bboost', 2], ['3xc', 8]],
       squad: ['Sánchez', 'Gabriel', 'Frimpong', 'Muñoz', 'Palmer', 'Wirtz', 'Kudus', 'Bowen', 'Haaland', 'Gyökeres', 'Mateta',
         'Roefs', 'Rogers', 'Senesi', 'Welbeck'] },
-    { name: 'Jess Okafor', team: 'Wirtz Case Scenario', cap: 'Salah', vice: 'Palmer',
+    { name: 'Jess Okafor', team: 'Wirtz Case Scenario', cap: 'Salah', vice: 'Palmer', chips: [],
       squad: ['Raya', 'Van Dijk', 'Timber', 'Hall', 'Salah', 'Palmer', 'Iwobi', 'Rogers', 'Mitoma', 'Haaland', 'Ekitiké',
         'Dúbravka', 'Hudson-Odoi', 'Esteve', 'Thiago'] },
-    { name: 'Ben Carter', team: 'Ctrl Alt Delap', cap: 'Salah', vice: 'Haaland', hits: 8,
+    { name: 'Ben Carter', team: 'Ctrl Alt Delap', cap: 'Salah', vice: 'Haaland', hits: 8, chips: [['freehit', 3], ['wildcard', 5], ['bboost', 7]],
       squad: ['Alisson', 'Gabriel', 'Saliba', 'Van de Ven', 'Senesi', 'Salah', 'Saka', 'Foden', 'Haaland', 'Woltemade', 'Šeško',
         'Pickford', 'Sarr', 'Dalot', 'Richarlison'] },
-    { name: 'Maya Lewis', team: 'Expected Toulouse', cap: 'Saka', vice: 'Salah', chip: 'bboost',
+    { name: 'Maya Lewis', team: 'Expected Toulouse', cap: 'Saka', vice: 'Salah', chips: [['3xc', 4], ['bboost', 8]],
       squad: ['Donnarumma', 'Cucurella', 'Gabriel', 'Van Dijk', 'Lacroix', 'Saka', 'Salah', 'Palmer', 'Semenyo', 'Haaland', 'Thiago',
         'Pickford', 'Damsgaard', 'Tarkowski', 'Jiménez'] },
   ];
+
+  // The season's chips, as bootstrap-static lists them: each once in both halves.
+  const CHIP_WINDOWS = [
+    ['wildcard', 2, 19], ['wildcard', 20, 38], ['freehit', 2, 19], ['bboost', 1, 19],
+    ['3xc', 1, 19], ['freehit', 20, 38], ['bboost', 20, 38], ['3xc', 20, 38],
+  ].map(([name, start_event, stop_event], i) => ({ id: i + 1, name, number: 1, start_event, stop_event }));
 
   // Force a couple of situations worth showing: a non-playing starter (auto-sub)
   // and a quiet captain.
@@ -229,15 +235,19 @@
         total += points;
         current.push({ event: g, points, total_points: total, event_transfers_cost: 0 });
       }
-      history[5000 + i] = { current };
+      history[5000 + i] = {
+        current,
+        chips: m.chips.filter(([, event]) => event <= CURRENT).map(([name, event]) => ({ name, time: new Date().toISOString(), event })),
+      };
       return { id: i + 1, entry: 5000 + i, entry_name: m.team, player_name: m.name, rank: 0, last_rank: 0, total, event_total: 0 };
     }).sort((x, y) => y.total - x.total).map((s, i) => ({ ...s, rank: i + 1, last_rank: i + 1 }));
 
     const picks = {};
     MANAGERS.forEach((m, i) => {
-      const bb = m.chip === 'bboost';
+      const chipNow = (m.chips.find(([, event]) => event === gw) || [])[0] || null; // played in this very week
+      const bb = chipNow === 'bboost';
       picks[5000 + i] = {
-        active_chip: m.chip || null,
+        active_chip: chipNow,
         automatic_subs: [],
         entry_history: { event: gw, points: 0, event_transfers: m.hits ? m.hits / 4 + 1 : 1, event_transfers_cost: m.hits || 0 },
         picks: m.squad.map((name, j) => {
@@ -246,7 +256,7 @@
           const cap = name === m.cap;
           return {
             element: el.id, position: j + 1,
-            multiplier: j >= 11 ? (bb ? 1 : 0) : cap ? (m.chip === '3xc' ? 3 : 2) : 1,
+            multiplier: j >= 11 ? (bb ? 1 : 0) : cap ? (chipNow === '3xc' ? 3 : 2) : 1,
             is_captain: cap, is_vice_captain: name === m.vice,
           };
         }),
@@ -259,7 +269,7 @@
         events: Array.from({ length: 38 }, (_, i) => ({
           id: i + 1, name: `Gameweek ${i + 1}`, is_current: i + 1 === CURRENT, finished: i + 1 < CURRENT, data_checked: i + 1 < CURRENT,
         })),
-        teams, elements,
+        teams, elements, chips: CHIP_WINDOWS,
         element_types: [1, 2, 3, 4].map((id) => ({ id, singular_name_short: ['GKP', 'DEF', 'MID', 'FWD'][id - 1] })),
       },
       fixtures,

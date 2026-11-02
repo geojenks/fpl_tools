@@ -592,6 +592,44 @@
     }
   }
 
+  // ---- Chips ("powers") ------------------------------------------------------
+
+  const CHIP_INFO = {
+    wildcard: ['WC', 'Wildcard'], freehit: ['FH', 'Free Hit'], bboost: ['BB', 'Bench Boost'],
+    '3xc': ['TC', 'Triple Captain'], manager: ['AM', 'Assistant Manager'],
+  };
+  const CHIP_ORDER = Object.keys(CHIP_INFO);
+
+  /**
+   * Where each chip stands for a manager in gameweek `gw`: 'active' (played this week),
+   * 'spent' (played in an earlier week of its window) or 'available'.
+   * `windows` is bootstrap-static's `chips` (a chip can appear once per half of the season),
+   * `used` is the manager's history `chips` ({ name, event }) and `activeChip` this week's
+   * picks.active_chip. A chip played in a later week than `gw` counts as available, as it was then.
+   */
+  function chipStatus(windows, used, gw, activeChip) {
+    const names = [...new Set((windows || []).map((w) => w.name))]
+      .sort((a, b) => (CHIP_ORDER.indexOf(a) + 1 || 99) - (CHIP_ORDER.indexOf(b) + 1 || 99));
+    return names.map((name) => {
+      const ws = windows.filter((w) => w.name === name).sort((a, b) => a.start_event - b.start_event);
+      const w = ws.find((x) => gw >= x.start_event && gw <= x.stop_event) || ws.find((x) => x.start_event > gw) || ws[ws.length - 1];
+      const inWindow = (u) => u.name === name && u.event >= w.start_event && u.event <= w.stop_event;
+      const mine = (used || []).filter(inWindow);
+      const info = CHIP_INFO[name] || [name.slice(0, 2).toUpperCase(), name];
+      let state = 'available';
+      let usedGw = null;
+      const earlier = mine.filter((u) => u.event < gw).sort((a, b) => b.event - a.event)[0];
+      if (mine.some((u) => u.event === gw) || (activeChip === name && gw >= w.start_event && gw <= w.stop_event)) {
+        state = 'active';
+        usedGw = gw;
+      } else if (earlier) {
+        state = 'spent';
+        usedGw = earlier.event;
+      }
+      return { name, short: info[0], label: info[1], state, usedGw, start: w.start_event, stop: w.stop_event, windows: ws.length };
+    });
+  }
+
   // ---- Saved leagues ("My leagues") and a team's leagues -------------------
 
   /** A team ID from a bare number or any FPL team link (…/entry/123456/…). '' if none. */
@@ -642,7 +680,7 @@
   }
 
   const api = {
-    parseTeamId, addLeague, removeLeague, entryLeagues,
+    parseTeamId, addLeague, removeLeague, entryLeagues, chipStatus,
     POS, statLabel, statShort, bonusFinal, bonusFromBps, buildMatches, buildPlayers, buildTeam, buildLeague, compare,
     projectPlayer, leagueAverage, gameweekStatus, formationOk, fixtureDone,
     ownership, ownedBy, ownedMatch, standingsTable,

@@ -334,3 +334,28 @@ test('a starter with no minutes well into a live match is treated as out', () =>
   const on = m.teams[0].slots.find((s) => s.player.id === 1);
   assert.ok(on.projected > on.player.points);
 });
+
+// bootstrap-static's chips for 2026-27: every chip once in each half of the season.
+const CHIP_WINDOWS = [
+  { name: 'wildcard', start_event: 2, stop_event: 19 }, { name: 'wildcard', start_event: 20, stop_event: 38 },
+  { name: 'freehit', start_event: 2, stop_event: 19 }, { name: 'bboost', start_event: 1, stop_event: 19 },
+  { name: '3xc', start_event: 1, stop_event: 19 }, { name: 'freehit', start_event: 20, stop_event: 38 },
+  { name: 'bboost', start_event: 20, stop_event: 38 }, { name: '3xc', start_event: 20, stop_event: 38 },
+];
+
+test('chips: played this week, spent earlier, or still to use', () => {
+  const used = [{ name: '3xc', event: 3 }, { name: 'wildcard', event: 5 }, { name: 'freehit', event: 9 }];
+  const at = (gw, active) => Object.fromEntries(FPL.chipStatus(CHIP_WINDOWS, used, gw, active).map((c) => [c.short, c.state + (c.usedGw ? `@${c.usedGw}` : '')]));
+  assert.deepEqual(at(9, 'freehit'), { WC: 'spent@5', FH: 'active@9', BB: 'available', TC: 'spent@3' });
+  // Looking back at gameweek 4: the wildcard and free hit hadn't been played yet.
+  assert.deepEqual(at(4, null), { WC: 'available', FH: 'available', BB: 'available', TC: 'spent@3' });
+  // The second half of the season brings every chip back.
+  assert.deepEqual(at(20, null), { WC: 'available', FH: 'available', BB: 'available', TC: 'available' });
+  // The picks say a chip is being played before the history lists it.
+  assert.equal(at(10, 'bboost').BB, 'active@10');
+  // Order is Wildcard, Free Hit, Bench Boost, Triple Captain; labels and windows are carried along.
+  const list = FPL.chipStatus(CHIP_WINDOWS, [], 9, null);
+  assert.deepEqual(list.map((c) => c.name), ['wildcard', 'freehit', 'bboost', '3xc']);
+  assert.deepEqual([list[0].label, list[0].start, list[0].stop, list[0].windows], ['Wildcard', 2, 19, 2]);
+  assert.deepEqual(FPL.chipStatus(null, null, 1, null), []); // no chip data, nothing shown
+});

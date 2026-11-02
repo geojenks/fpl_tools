@@ -23,7 +23,7 @@
     get me() { return store.get('me.' + this.league, ''); },
     set me(v) { store.set('me.' + this.league, v); },
   };
-  const emptyRaw = () => ({ bootstrap: null, standings: null, leagueName: '', picks: {}, history: {}, gw: null, weeks: {}, squads: {}, elMap: null });
+  const emptyRaw = () => ({ bootstrap: null, standings: null, leagueName: '', picks: {}, history: {}, gw: null, weeks: {}, squads: {}, elMap: null, historyGw: null });
   const state = {
     demo: params.has('demo') || !!window.FPL_FORCE_DEMO,
     raw: emptyRaw(),
@@ -137,6 +137,7 @@
       if (raw.gw !== gw) { raw.picks = {}; raw.gw = gw; }
 
       const missing = raw.standings.filter((e) => !raw.picks[e.entry]);
+      if (raw.historyGw !== raw.maxGw) { raw.history = {}; raw.historyGw = raw.maxGw; } // chips and past totals change each gameweek
       const noHistory = raw.standings.filter((e) => !(e.entry in raw.history));
       const [fixtures, live] = await Promise.all([
         source.get(`fixtures/?event=${gw}`),
@@ -395,6 +396,19 @@
 
   const CHIPS = { bboost: ['BB', 'Bench Boost'], '3xc': ['TC', 'Triple Captain'], freehit: ['FH', 'Free Hit'], wildcard: ['WC', 'Wildcard'], manager: ['AM', 'Assistant Manager'] };
 
+  /** A manager's chips for the week on show: being played now (green outline), still to use, or already spent (grey). */
+  function powersHtml(t) {
+    const windows = state.raw.bootstrap && state.raw.bootstrap.chips;
+    const hist = state.raw.history[t.entry.entry];
+    if (!windows || !windows.length || !hist) return '';
+    const said = { active: 'being played this week', spent: 'already used', available: 'still to use' };
+    const pills = FPL.chipStatus(windows, hist.chips || [], state.gw, t.chip).map((c) => {
+      const title = `${c.label}: ${said[c.state]}${c.state === 'spent' ? ` in GW ${c.usedGw}` : ''}${c.windows > 1 ? ` (this half of the season: GW ${c.start} to ${c.stop})` : ''}`;
+      return `<li class="pw ${c.state}" title="${esc(title)}" aria-label="${esc(title)}">${esc(c.short)}${c.state === 'spent' ? `<small>GW${c.usedGw}</small>` : ''}</li>`;
+    });
+    return `<ul class="powers" aria-label="Chips">${pills.join('')}</ul>`;
+  }
+
   const POS_NAMES = { 1: 'GK', 2: 'DEF', 3: 'MID', 4: 'FWD' };
 
   /** Starting line-up split into GK / DEF / MID / FWD groups (anything else joins FWD). */
@@ -425,7 +439,8 @@
     if (state.own.on) tags.unshift(ownTag(t));
     const lines = lineGroups(t.slots.filter((s) => !s.bench));
 
-    return `<article class="row${isMe ? ' me' : ''}" id="m-${e.entry}" data-entry="${e.entry}">
+    const powers = powersHtml(t);
+    return `<article class="row${isMe ? ' me' : ''}${powers ? '' : ' no-powers'}" id="m-${e.entry}" data-entry="${e.entry}">
       <div class="sum">
         <div class="who"><span class="rank">${rank}</span><b class="who-link" data-leagues="${e.entry}" role="button" tabindex="0" title="${esc(e.entry_name)} · see the leagues this team is in">${esc(e.entry_name)}</b><small title="${esc(e.player_name)}">${esc(e.player_name)}</small><span class="fm" title="Formation">${formation(lines)}</span></div>
         <div class="scoreline">
@@ -440,6 +455,7 @@
           <span title="Players yet to play"><b>${t.toPlay.count}</b> to play${t.toPlay.captain ? ' (C)' : ''}</span>
         </div>
       </div>
+      ${powers}
       <div class="xi">${lines.map((l, i) => `<div class="line" data-pos="${POS_NAMES[i + 1]}" style="flex:${Math.max(l.length, 1)}">${l.map((s) => cardHtml(s)).join('')}</div>`).join('')}</div>
       <div class="bench"><span class="bench-label">Bench</span>${t.slots.filter((s) => s.bench).map((s) => cardHtml(s)).join('')}</div>
     </article>`;
