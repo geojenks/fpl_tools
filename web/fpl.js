@@ -46,6 +46,12 @@
   // match has reached full time and this long has passed since kick-off (about
   // 1h50 of play, plus FPL's usual hour to confirm bonus, plus a margin).
   const BONUS_CONFIRM_MS = 3.5 * 3600e3;
+
+  // A player with no minutes this far into a live match isn't on the pitch: a
+  // starter would have minutes by now. He may still come on as a late sub, but
+  // for projecting we treat him as out.
+  const OUT_AFTER_MINUTE = 15;
+  const outOfLive = (f) => f.live && !f.minutesHere && f.elapsed >= OUT_AFTER_MINUTE;
   function bonusFinal(f, now) {
     if (f.finished) return true;
     if (!f.finished_provisional || !f.kickoff_time) return false;
@@ -162,6 +168,8 @@
           bonusAddedHere: addedHere,
           bps: bpsMap ? bpsMap.get(id) || 0 : null,
           explain: ((lv && lv.explain) || []).find((x) => x.fixture === f.id) || null,
+          minutesHere: (((((lv && lv.explain) || []).find((x) => x.fixture === f.id) || {}).stats || [])
+            .find((s) => s.identifier === 'minutes') || {}).value || 0,
         };
       });
 
@@ -185,6 +193,8 @@
         state,
         // Definitely won't score this GW: blank, or every fixture over with no minutes.
         dnp: state === 'blank' || (state === 'done' && minutes === 0),
+        // No minutes well into a live match, and nothing else to come: out for projecting.
+        likelyOut: state === 'live' && minutes === 0 && fx.some(outOfLive) && fx.every((f) => f.done || outOfLive(f)),
         provisional: fx.some((f) => f.started && !f.bonusConfirmed),
         fixtures: fx,
         xp: parseFloat(el.ep_this) || 0,
@@ -273,22 +283,32 @@
       }
     } else if (!benchBoost) {
       const used = new Set();
+      // First bench player, in order, who is still available and keeps a legal formation.
+      const candidate = (s) => slots.filter((x) => x.bench).find((b) => {
+        if (used.has(b) || isGk(b.player) !== isGk(s.player) || b.player.dnp || b.player.likelyOut) return false;
+        // The XI as it stands (other non-playing starters still on it), plus replacements already reserved.
+        const reserved = [...used].filter((u) => u.mult === 0).map((u) => u.player);
+        const xi = slots.filter((x) => x.mult > 0 && x !== s).map((x) => x.player).concat(reserved, b.player);
+        return formationOk(xi);
+      });
       for (const s of slots.filter((x) => !x.bench)) {
         if (!s.player.dnp) continue;
-        for (const b of slots.filter((x) => x.bench)) {
-          if (used.has(b) || isGk(b.player) !== isGk(s.player) || b.player.dnp) continue;
-          if (b.player.minutes === 0) {
-            // Next bench player hasn't played yet: can't decide this sub yet.
-            s.subPending = true;
-            break;
-          }
-          const xi = slots.filter((x) => x.mult > 0 && x !== s).map((x) => x.player).concat(b.player);
-          if (!formationOk(xi)) continue;
-          used.add(b);
+        const b = candidate(s);
+        if (!b) continue;
+        used.add(b);
+        if (b.player.minutes === 0) {
+          // The bench player hasn't played yet: can't decide this sub, but the projection expects him.
+          s.subPending = true;
+          s.replacement = b;
+        } else {
           s.mult = 0; s.subOut = true;
           b.mult = 1; b.subIn = true;
-          break;
         }
+      }
+      // Starters who look to be out of a live match: not certain, so no sub is marked, but the projection expects one.
+      for (const s of slots.filter((x) => !x.bench && x.mult > 0 && !x.replacement && x.player.likelyOut)) {
+        const b = candidate(s);
+        if (b) { used.add(b); s.replacement = b; }
       }
     }
 
@@ -337,7 +357,7 @@
     let extra = 0;
     for (const f of p.fixtures) {
       if (!f.started) extra += basisPerFixture;
-      else if (f.live) extra += basisPerFixture * Math.max(0, 90 - f.elapsed) / 90;
+      else if (f.live && !outOfLive(f)) extra += basisPerFixture * Math.max(0, 90 - f.elapsed) / 90;
     }
     return p.points + extra;
   }
@@ -363,8 +383,17 @@
     }
     let total = -team.hits;
     for (const s of team.counted) {
-      s.projected = projectPlayer(s.player, basisFor(mode, team, s.player, leagueAvg));
-      total += s.mult * s.projected;
+      if (s.replacement) {
+        // Out of the match, so his auto-sub is expected to fill the slot. A sub's chance of playing is
+        // already inside FPL's expected points for him, so that is his basis whichever mode is chosen.
+        const c = s.replacement.player;
+        s.projected = s.player.points;
+        s.replacementProjected = projectPlayer(c, c.xp / Math.max(1, c.fixtures.length));
+        total += s.mult * s.player.points + s.replacementProjected;
+      } else {
+        s.projected = projectPlayer(s.player, basisFor(mode, team, s.player, leagueAvg));
+        total += s.mult * s.projected;
+      }
     }
     return total;
   }

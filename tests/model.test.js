@@ -290,3 +290,47 @@ test("a team's leagues skip official leagues and keep rank and size", () => {
     [['246924', 'classic', 1, 2, 6], ['99', 'h2h', 3, null, 8]]);
   assert.deepEqual(FPL.entryLeagues({ id: 1, name: 'x' }).leagues, []); // no leagues block
 });
+
+test('projection fills a no-show starter\'s slot with the bench player who will come on', () => {
+  // Starter 3 (DEF) finished with no minutes; bench DEF 13 plays in a match that hasn't started.
+  const w = world({ minutes: { 3: 0 }, points: { 3: 0 } });
+  const t = FPL.buildLeague({ ...w, projection: 'league' }).teams[0];
+  const slot = t.slots.find((s) => s.player.id === 3);
+  assert.equal(slot.subPending, true);
+  assert.equal(slot.replacement.player.id, 13);
+  assert.equal(slot.replacementProjected, 4); // FPL's expected points for him: one match still to come
+  // The slot is worth exactly that much more than when the sub is expected to score nothing.
+  const none = world({ minutes: { 3: 0 }, points: { 3: 0 } });
+  none.bootstrap.elements[12].ep_this = '0.0';
+  assert.equal(t.projected - FPL.buildLeague({ ...none, projection: 'league' }).teams[0].projected, 4);
+});
+
+test('two no-show starters get different replacements, and formation is respected', () => {
+  const w = world({ minutes: { 3: 0, 4: 0 }, points: { 3: 0, 4: 0 } });
+  const t = FPL.buildLeague(w).teams[0];
+  const ids = [3, 4].map((id) => t.slots.find((s) => s.player.id === id).replacement.player.id);
+  assert.deepEqual(ids, [13, 14]); // bench order: DEF 13, then MID 14 (GK 12 can't replace an outfielder)
+  // Three no-shows are matched to the bench in priority order, each bench player used once.
+  const w2 = world({ minutes: { 2: 0, 3: 0, 4: 0 }, points: { 2: 0, 3: 0, 4: 0 } });
+  const picks = FPL.buildLeague(w2).teams[0].slots;
+  assert.deepEqual([2, 3, 4].map((id) => picks.find((s) => s.player.id === id).replacement.player.id), [13, 14, 15]);
+});
+
+test('a starter with no minutes well into a live match is treated as out', () => {
+  const w = world({ minutes: { 6: 0 }, points: { 6: 0 } });
+  w.fixtures[0].finished_provisional = false;
+  w.fixtures[0].minutes = 30;
+  // The players who are on have minutes in this fixture; player 6 has none.
+  for (const e of w.live.elements) {
+    if (e.id <= 8 && e.id !== 6) e.explain = [{ fixture: 1, stats: [{ identifier: 'minutes', value: 30, points: 1 }] }];
+  }
+  const m = FPL.buildLeague({ ...w, projection: 'league' });
+  const out = m.teams[0].slots.find((s) => s.player.id === 6);
+  assert.equal(out.player.likelyOut, true);
+  assert.equal(out.subOut, false); // not certain, so no auto-sub is marked
+  assert.ok(out.replacement); // but the projection expects one
+  assert.equal(out.projected, 0); // nothing more is added for a player who isn't on
+  // A player who is on keeps getting credit for the time left.
+  const on = m.teams[0].slots.find((s) => s.player.id === 1);
+  assert.ok(on.projected > on.player.points);
+});
