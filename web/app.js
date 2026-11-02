@@ -23,7 +23,7 @@
     get me() { return store.get('me.' + this.league, ''); },
     set me(v) { store.set('me.' + this.league, v); },
   };
-  const emptyRaw = () => ({ bootstrap: null, standings: null, leagueName: '', picks: {}, history: {}, gw: null });
+  const emptyRaw = () => ({ bootstrap: null, standings: null, leagueName: '', picks: {}, history: {}, gw: null, weeks: {}, squads: {}, elMap: null });
   const state = {
     demo: params.has('demo') || !!window.FPL_FORCE_DEMO,
     raw: emptyRaw(),
@@ -34,6 +34,7 @@
     compare: null, // { a: entryId, b: entryId }
     matchOpen: {}, // fixture id -> 1 (events) or 2 (full points breakdown); absent = collapsed
     entryCache: {}, // team id -> { team, leagues } from FPL's entry endpoint
+    inView: '', // the team showing on the board's swipe page (phones)
     updatedAt: null,
     timer: null,
     loading: false,
@@ -152,6 +153,7 @@
       state.updatedAt = new Date();
       if (!state.demo) store.set('lastLeague', settings.league);
       refreshSavedName();
+      for (const gw of Object.keys(raw.weeks)) if (+gw >= (raw.maxGw || 0)) raw.weeks[gw].stale = true;
       updateUrl();
       rebuild();
       clearBanner();
@@ -375,8 +377,12 @@
     }
     renderStrip(teams);
     const rankOf = new Map(sortedTeams().map((t, i) => [t.entry.entry, i + 1]));
+    const keep = $('#board').scrollLeft;
     $('#board').innerHTML = teams.map((t) => rowHtml(t, rankOf.get(t.entry.entry))).join('');
+    if (keep) $('#board').scrollLeft = keep; // some browsers drop the swipe position when the strip is repainted
     observeSlides();
+    const rows = [...document.querySelectorAll('#board .row')];
+    if (!rows.some((r) => r.dataset.entry === state.inView) && rows.length) setInView(rows[0].dataset.entry);
   }
 
   function barHtml(team) {
@@ -552,6 +558,12 @@
     if (row) $('#board').scrollTo({ left: row.offsetLeft - $('#board').offsetLeft, behavior: 'smooth' });
   });
   let slideObserver;
+  /** The team on the board's current swipe page; the Matches section's club numbers follow it on phones. */
+  function setInView(id) {
+    if (state.inView === id) return;
+    state.inView = id;
+    if (phoneQuery.matches && mtChoice() === 'auto') refreshClubNumbers();
+  }
   function observeSlides() {
     if (!('IntersectionObserver' in window)) return;
     if (slideObserver) slideObserver.disconnect();
@@ -560,6 +572,7 @@
         if (en.intersectionRatio < 0.6) continue;
         const id = en.target.dataset.entry;
         for (const b of document.querySelectorAll('#strip [data-go]')) b.setAttribute('aria-current', String(b.dataset.go === id));
+        setInView(id);
       }
     }, { root: $('#board'), threshold: [0.6] });
     document.querySelectorAll('#board .row').forEach((r) => slideObserver.observe(r));
@@ -883,53 +896,135 @@
   });
 
   // ---------- Matches ----------
+  // One page per gameweek in a sideways-scrolling strip. Only the weeks near the visible one are fetched.
+  const mt = { builtFor: '', active: 0, lastMain: null, timer: null, wasHidden: true, ro: null };
+  const phoneQuery = window.matchMedia ? window.matchMedia('(max-width: 900px)') : { matches: false };
+  const weekEvents = () => (state.raw.bootstrap && state.raw.bootstrap.events) || [];
+  const weekIndex = (gw) => Math.max(0, weekEvents().findIndex((e) => e.id === gw));
+
   const dayKey = (iso) => (iso ? new Date(iso).toDateString() : 'tbc');
   const dayLabel = (iso) => (iso
     ? new Date(iso).toLocaleDateString([], { weekday: 'long', day: 'numeric', month: 'short' })
     : 'Date to be confirmed');
+  const shortDay = (iso) => new Date(iso).toLocaleDateString([], { weekday: 'short', day: 'numeric', month: 'short' });
   const clockTime = (iso) => (iso
     ? new Date(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }) : 'TBC');
 
   function matchStatusText(m) {
     if (m.status === 'upcoming') return clockTime(m.kickoff);
     if (m.status === 'live') return `${m.minute}'`;
-    if (m.status === 'ft') return 'FT';
     return 'FT';
   }
 
-  /** Names with ownership: a small figure shows how many league managers have the player. */
-  function eventNames(entries) {
-    return entries.map((e) => `<span class="evp">${esc(e.player.name)}${e.count > 1 ? ` ×${e.count}` : ''}${e.owners ? `<sup class="own-n" title="${e.owners} manager${e.owners === 1 ? '' : 's'} in this league">${e.owners}</sup>` : ''}</span>`).join(', ');
+  // ---- whose squad the club numbers describe
+  const mtForKey = () => `mtFor.${settings.league}`;
+  const mtChoice = () => store.get(mtForKey(), 'auto'); // 'auto' | '' (nobody) | a team id
+
+  /**
+   * The manager the club numbers are for: the team shown above (the swipe page on a phone), else
+   * "My team" on a wide screen where every team is showing, unless one is picked from the dropdown.
+   */
+  function mtSubject() {
+    const choice = mtChoice();
+    if (choice === '') return '';
+    if (choice !== 'auto') return String(choice);
+    if (state.compare) return '';
+    return String((phoneQuery.matches ? state.inView : settings.me) || '');
   }
 
-  function eventsHtml(m) {
+  const elementsMap = () => {
+    const raw = state.raw;
+    if (!raw.elMap) raw.elMap = new Map(raw.bootstrap.elements.map((e) => [e.id, e]));
+    return raw.elMap;
+  };
+
+  // What a manager has: their real picks for past and current weeks, their present squad for future ones.
+  const latestGw = () => state.raw.maxGw || state.gw;
+  const squadKey = (entry, gw) => (gw > latestGw() ? `${entry}:present:${latestGw()}` : `${entry}:${gw}`);
+  function cachedSquad(entry, gw) {
+    if (gw <= latestGw() && gw === state.gw && state.raw.picks[entry]) return state.raw.picks[entry];
+    return state.raw.squads[squadKey(entry, gw)] || null;
+  }
+  async function fetchSquad(entry, gw) {
+    const raw = state.raw;
+    if (cachedSquad(entry, gw)) return;
+    const key = squadKey(entry, gw);
+    const pick = async (g) => (g === state.gw && raw.picks[entry]) || raw.squads[`${entry}:${g}`]
+      || (raw.squads[`${entry}:${g}`] = await source.get(`entry/${entry}/event/${g}/picks/`));
+    if (gw <= latestGw()) { await pick(gw); return; }
+    const latest = await pick(latestGw());
+    // After a Free Hit the squad reverts, so "present" is the week before.
+    raw.squads[key] = latest.active_chip === 'freehit' && latestGw() > 1 ? await pick(latestGw() - 1) : latest;
+  }
+
+  /** Club -> how many of the subject's footballers play for it that week, plus which players are his. */
+  function clubCounts(gw) {
+    const entry = mtSubject();
+    const picks = entry && cachedSquad(entry, gw);
+    if (!picks) return null;
+    const els = elementsMap();
+    const byTeam = new Map();
+    const mine = new Map();
+    for (const pk of picks.picks) {
+      const el = els.get(pk.element);
+      if (!el) continue;
+      const bench = pk.position > 11 && picks.active_chip !== 'bboost';
+      const t = byTeam.get(el.team) || { n: 0, names: [] };
+      t.n++;
+      t.names.push(`${el.web_name}${pk.is_captain ? ' (C)' : ''}${bench ? ' (bench)' : ''}`);
+      byTeam.set(el.team, t);
+      mine.set(el.id, bench ? 'bench' : 'xi');
+    }
+    return { byTeam, mine };
+  }
+
+  // ---- rendering one match and one week
+  const mark = (mine, id) => (mine && mine.get(id) ? ` mine${mine.get(id) === 'bench' ? ' benched' : ''}` : '');
+
+  /** Names with ownership: a small figure shows how many league managers have the player. */
+  function eventNames(entries, mine) {
+    return entries.map((e) => `<span class="evp${mark(mine, e.player.id)}">${esc(e.player.name)}${e.count > 1 ? ` ×${e.count}` : ''}${e.owners ? `<sup class="own-n" title="${e.owners} manager${e.owners === 1 ? '' : 's'} in this league">${e.owners}</sup>` : ''}</span>`).join(', ');
+  }
+
+  function eventsHtml(m, mine) {
     if (!m.hasEvents) return `<p class="mnote">${m.status === 'upcoming' ? 'Not started.' : 'No goals or cards.'}</p>`;
     const side = (s, cls) => `<div class="ev-side ${cls}"><h4>${esc(s.team.name)}</h4>${s.events.length
-      ? s.events.map((ev) => `<div class="ev-row"><span class="ev-k ${ev.identifier}">${esc(ev.label)}</span><span class="ev-v">${eventNames(ev.entries)}</span></div>`).join('')
+      ? s.events.map((ev) => `<div class="ev-row"><span class="ev-k ${ev.identifier}">${esc(ev.label)}</span><span class="ev-v">${eventNames(ev.entries, mine)}</span></div>`).join('')
       : '<p class="mnote">Nothing to show.</p>'}</div>`;
     return `<div class="ev-grid">${side(m.home, 'h')}${side(m.away, 'a')}</div>`;
   }
 
-  function breakdownHtml(m) {
+  function breakdownHtml(m, mine, loading) {
     const line = (l) => {
       const mult = l.value > 1 && !['minutes', 'bps', 'bonus'].includes(l.identifier) ? ` ×${l.value}` : '';
-      const mark = l.provisional ? '?' : '';
-      return `<span class="bk${l.provisional ? ' prov' : ''}${l.points < 0 ? ' neg' : ''}">${esc(FPL.statShort(l.identifier))}${l.identifier === 'minutes' ? ` ${l.value}'` : mult} <b>${l.points > 0 ? '+' : ''}${l.points}${mark}</b></span>`;
+      const flag = l.provisional ? '?' : '';
+      return `<span class="bk${l.provisional ? ' prov' : ''}${l.points < 0 ? ' neg' : ''}">${esc(FPL.statShort(l.identifier))}${l.identifier === 'minutes' ? ` ${l.value}'` : mult} <b>${l.points > 0 ? '+' : ''}${l.points}${flag}</b></span>`;
     };
     const team = (s, cls) => `<div class="bk-team ${cls}"><h4>${esc(s.team.name)}</h4>${s.rows.length
-      ? s.rows.map((r) => `<div class="pl"><span class="pn">${esc(r.player.name)}<sup class="own-n"${r.owners ? ` title="${r.owners} manager${r.owners === 1 ? '' : 's'} in this league"` : ''}>${r.owners || ''}</sup> <small>${esc(r.player.posName)}</small></span><b class="pp">${r.points}</b><span class="pb">${r.lines.map(line).join('')}</span></div>`).join('')
-      : '<p class="mnote">No points yet.</p>'}</div>`;
+      ? s.rows.map((r) => `<div class="pl${mark(mine, r.player.id)}"><span class="pn">${esc(r.player.name)}<sup class="own-n"${r.owners ? ` title="${r.owners} manager${r.owners === 1 ? '' : 's'} in this league"` : ''}>${r.owners || ''}</sup> <small>${esc(r.player.posName)}</small></span><b class="pp">${r.points}</b><span class="pb">${r.lines.map(line).join('')}</span></div>`).join('')
+      : `<p class="mnote">${loading ? 'Loading points…' : 'No points yet.'}</p>`}</div>`;
     return `<div class="bk-grid">${team(m.home, 'h')}${team(m.away, 'a')}</div>
       <p class="mnote">Points as FPL scores them. A violet <b class="prov-mark">?</b> marks bonus that isn't confirmed yet.</p>`;
   }
 
-  function renderMatches() {
-    const box = $('#matches');
-    const matches = (state.model && state.model.matches) || [];
-    if (!matches.length) { box.hidden = true; return; }
+  /** A team's name in the match row, with the subject's club count beside it. */
+  function teamCell(side, counts, cls) {
+    const c = counts && counts.byTeam.get(side.team.id);
+    const n = c ? `<span class="club-n" title="${esc(c.names.join(', '))}" aria-label="${c.n} of your footballers: ${esc(c.names.join(', '))}">${c.n}</span>` : '';
+    const name = `<span class="tname"><span class="tn-long">${esc(side.team.name)}</span><span class="tn-short">${esc(side.team.short_name)}</span></span>`;
+    return `<span class="mt ${cls}" title="${esc(side.team.name)}">${cls === 'h' ? n + name : name + n}</span>`;
+  }
+
+  function weekHtml(gw) {
+    const matches = weekMatches(gw);
+    const wk = state.raw.weeks[gw] || {};
+    if (!matches) return `<p class="mnote mt-msg">${wk.error ? `Couldn't load this week (${esc(wk.error)}).` : 'Loading…'}</p>`;
+    if (!matches.length) return '<p class="mnote mt-msg">No fixtures this gameweek.</p>';
+    const counts = clubCounts(gw);
+    const mine = counts && counts.mine;
     const open = state.matchOpen;
     let day = null;
-    const parts = [`<h2>Matches · GW ${state.gw}</h2>`];
+    const parts = [];
     for (const m of matches) {
       const key = dayKey(m.kickoff);
       if (key !== day) { day = key; parts.push(`<h3 class="mday">${esc(dayLabel(m.kickoff))}</h3>`); }
@@ -939,28 +1034,212 @@
       parts.push(`<article class="match ${m.status}" data-mid="${m.id}">
         <div class="mrow">
           <span class="mst">${esc(matchStatusText(m))}${m.status === 'ft' ? '<small>bonus</small>' : ''}</span>
-          <span class="mt h" title="${esc(m.home.team.name)}"><span class="tn-long">${esc(m.home.team.name)}</span><span class="tn-short">${esc(m.home.team.short_name)}</span></span>
+          ${teamCell(m.home, counts, 'h')}
           <span class="msc" aria-label="${esc(label)}">${score}</span>
-          <span class="mt a" title="${esc(m.away.team.name)}"><span class="tn-long">${esc(m.away.team.name)}</span><span class="tn-short">${esc(m.away.team.short_name)}</span></span>
+          ${teamCell(m.away, counts, 'a')}
           <span class="mbtns">
             <button type="button" class="mt-btn" data-mid="${m.id}" data-lvl="1" aria-pressed="${lvl === 1}" aria-expanded="${lvl >= 1}" aria-controls="md-${m.id}" aria-label="Goals, assists and cards for ${esc(label)}">+</button>
             <button type="button" class="mt-btn" data-mid="${m.id}" data-lvl="2" aria-pressed="${lvl === 2}" aria-expanded="${lvl === 2}" aria-controls="md-${m.id}" aria-label="Full FPL points breakdown for ${esc(label)}">++</button>
           </span>
         </div>
-        ${lvl ? `<div class="mdetail" id="md-${m.id}">${eventsHtml(m)}${lvl === 2 ? breakdownHtml(m) : ''}</div>` : ''}
+        ${lvl ? `<div class="mdetail" id="md-${m.id}">${eventsHtml(m, mine)}${lvl === 2 ? breakdownHtml(m, mine, !!(wk.livePending)) : ''}</div>` : ''}
       </article>`);
     }
-    box.innerHTML = parts.join('');
-    box.hidden = false;
+    return parts.join('');
   }
+
+  // ---- data for weeks other than the one the page is on
+  function weekMatches(gw) {
+    if (gw === state.gw && state.model) return state.model.matches;
+    const wk = state.raw.weeks[gw];
+    return wk && wk.matches ? wk.matches : null;
+  }
+
+  function loadWeek(gw, { live = false } = {}) {
+    const raw = state.raw;
+    const wk = raw.weeks[gw] || (raw.weeks[gw] = {});
+    if (wk.loading) return wk.loading;
+    wk.loading = (async () => {
+      try {
+        if (!wk.fixtures || wk.stale) wk.fixtures = await source.get(`fixtures/?event=${gw}`);
+        if (live && (!wk.live || wk.stale)) wk.live = await source.get(`event/${gw}/live/`);
+        const liveData = wk.live || { elements: [] };
+        const players = FPL.buildPlayers({ bootstrap: raw.bootstrap, fixtures: wk.fixtures, live: liveData });
+        wk.matches = FPL.buildMatches(players, wk.fixtures, liveData, null);
+        wk.error = null;
+        wk.stale = false;
+      } catch (err) {
+        wk.error = err.message;
+      } finally {
+        wk.loading = null;
+        wk.livePending = false;
+      }
+    })();
+    return wk.loading;
+  }
+
+  /** Make sure a week's matches (and the subject's squad for it) are loaded, repainting its page as they arrive. */
+  function ensureWeek(gw) {
+    const raw = state.raw;
+    const wk = raw.weeks[gw];
+    if (gw !== state.gw && (!wk || (!wk.matches && !wk.error) || wk.stale)) {
+      loadWeek(gw).then(() => { if (raw === state.raw) renderPanel(gw); });
+    }
+    const entry = mtSubject();
+    if (entry && !cachedSquad(entry, gw)) {
+      fetchSquad(entry, gw).then(() => { if (raw === state.raw) renderPanel(gw); }).catch(() => {});
+    }
+  }
+
+  function ensureAround(idx) {
+    const evs = weekEvents();
+    for (const d of [0, 1, -1]) {
+      const e = evs[idx + d];
+      if (e) ensureWeek(e.id);
+    }
+  }
+
+  // ---- the strip
+  const trackEl = () => $('#mt-track');
+  const panelEl = (gw) => trackEl().querySelector(`.mt-week[data-gw="${gw}"]`);
+
+  function syncHeight() {
+    const track = trackEl();
+    const panel = track.children[mt.active];
+    if (panel && track.clientWidth) track.style.height = `${panel.offsetHeight}px`;
+  }
+
+  function renderPanel(gw) {
+    const panel = panelEl(gw);
+    if (!panel) return;
+    panel.innerHTML = weekHtml(gw);
+    syncHeight();
+  }
+
+  function updateMatchesHead() {
+    const evs = weekEvents();
+    const e = evs[mt.active];
+    if (!e) return;
+    $('#mt-gw').textContent = `GW ${e.id}`;
+    const ms = weekMatches(e.id);
+    const dated = (ms || []).filter((m) => m.kickoff);
+    let sub = e.id === latestGw() ? 'This week' : e.id < latestGw() ? 'Played' : 'Coming up';
+    if (dated.length) {
+      const first = shortDay(dated[0].kickoff), last = shortDay(dated[dated.length - 1].kickoff);
+      sub += ` · ${first}${first === last ? '' : ` – ${last}`}`;
+    }
+    $('#mt-sub').textContent = sub;
+    $('#mt-prev').disabled = mt.active <= 0;
+    $('#mt-next').disabled = mt.active >= evs.length - 1;
+    $('#mt-now').hidden = e.id === latestGw();
+  }
+
+  function scrollToWeek(idx, smooth) {
+    const track = trackEl();
+    mt.active = Math.max(0, Math.min(idx, weekEvents().length - 1));
+    track.scrollTo({ left: mt.active * track.clientWidth, behavior: smooth ? 'smooth' : 'auto' });
+    updateMatchesHead();
+    ensureAround(mt.active);
+    syncHeight();
+  }
+
+  function onTrackScroll() {
+    const track = trackEl();
+    if (!track.clientWidth) return;
+    const idx = Math.max(0, Math.min(Math.round(track.scrollLeft / track.clientWidth), weekEvents().length - 1));
+    if (idx !== mt.active) { mt.active = idx; updateMatchesHead(); }
+    clearTimeout(mt.timer);
+    mt.timer = setTimeout(() => { ensureAround(mt.active); syncHeight(); }, 120);
+  }
+
+  function buildTrack() {
+    const evs = weekEvents();
+    const sig = `${settings.league}|${state.demo}|${evs.length}`;
+    if (mt.builtFor === sig) return;
+    mt.builtFor = sig;
+    mt.lastMain = null;
+    trackEl().innerHTML = evs.map((e) => `<section class="mt-week" data-gw="${e.id}" aria-label="Gameweek ${e.id}"></section>`).join('');
+    if (mt.ro) mt.ro.disconnect();
+    if ('ResizeObserver' in window) {
+      mt.ro = new ResizeObserver(syncHeight);
+      for (const c of trackEl().children) mt.ro.observe(c);
+    }
+  }
+
+  function fillMtFor() {
+    const sel = $('#mt-for');
+    const choice = mtChoice();
+    const teams = (state.model && state.model.teams) || [];
+    const known = choice === 'auto' || choice === '' || teams.some((t) => String(t.entry.entry) === String(choice));
+    sel.innerHTML = '<option value="auto">The team shown above</option><option value="">Nobody</option>' +
+      teams.map((t) => `<option value="${t.entry.entry}">${esc(t.entry.entry_name)}</option>`).join('');
+    sel.value = known ? String(choice) : 'auto';
+    const who = mtSubject();
+    const team = teams.find((t) => String(t.entry.entry) === who);
+    $('#mt-for-name').textContent = team ? team.entry.entry_name : '';
+  }
+
+  function renderMatches() {
+    const box = $('#matches');
+    const evs = weekEvents();
+    if (!evs.length) { box.hidden = true; return; }
+    const wasHidden = box.hidden;
+    box.hidden = false;
+    buildTrack();
+    fillMtFor();
+    const followMain = mt.lastMain !== state.gw;
+    mt.lastMain = state.gw;
+    if (followMain) scrollToWeek(weekIndex(state.gw), false);
+    else if (wasHidden) trackEl().scrollTo({ left: mt.active * trackEl().clientWidth, behavior: 'auto' });
+    renderPanel(state.gw);
+    for (const e of evs) { // other weeks that are already on show: repaint, and refresh the ones that can still change
+      const wk = state.raw.weeks[e.id];
+      if (e.id !== state.gw && wk && wk.matches) renderPanel(e.id);
+    }
+    updateMatchesHead();
+    ensureAround(mt.active);
+    syncHeight();
+  }
+
+  /** The subject changed (a swipe above, a dropdown choice, Compare): repaint the pages that show club numbers. */
+  function refreshClubNumbers() {
+    if ($('#matches').hidden || !state.model) return;
+    fillMtFor();
+    const evs = weekEvents();
+    for (const d of [-1, 0, 1]) {
+      const e = evs[mt.active + d];
+      if (e) { ensureWeek(e.id); renderPanel(e.id); }
+    }
+  }
+
+  $('#mt-track').addEventListener('scroll', onTrackScroll, { passive: true });
+  $('#mt-prev').addEventListener('click', () => scrollToWeek(mt.active - 1, true));
+  $('#mt-next').addEventListener('click', () => scrollToWeek(mt.active + 1, true));
+  $('#mt-now').addEventListener('click', () => scrollToWeek(weekIndex(latestGw()), true));
+  $('#mt-for').addEventListener('change', (e) => {
+    store.set(mtForKey(), e.target.value);
+    refreshClubNumbers();
+  });
+  window.addEventListener('resize', () => { if (!$('#matches').hidden) scrollToWeek(mt.active, false); });
+  if (phoneQuery.addEventListener) phoneQuery.addEventListener('change', refreshClubNumbers);
+
   // Pressing the active button collapses; pressing the other switches level.
   $('#matches').addEventListener('click', (e) => {
     const b = e.target.closest('.mt-btn');
     if (!b) return;
+    const panel = b.closest('.mt-week');
+    const gw = +panel.dataset.gw;
     const id = +b.dataset.mid, lvl = +b.dataset.lvl;
     if (state.matchOpen[id] === lvl) delete state.matchOpen[id]; else state.matchOpen[id] = lvl;
-    renderMatches();
-    const again = document.querySelector(`#matches .mt-btn[data-mid="${id}"][data-lvl="${lvl}"]`);
+    const wk = state.raw.weeks[gw];
+    if (lvl === 2 && state.matchOpen[id] === 2 && gw !== state.gw && wk && !wk.live) {
+      // The full points breakdown needs that week's live data, fetched the first time it's asked for.
+      wk.livePending = true;
+      const raw = state.raw;
+      loadWeek(gw, { live: true }).then(() => { if (raw === state.raw) renderPanel(gw); });
+    }
+    renderPanel(gw);
+    const again = panelEl(gw).querySelector(`.mt-btn[data-mid="${id}"][data-lvl="${lvl}"]`);
     if (again) again.focus();
   });
 

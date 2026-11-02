@@ -274,6 +274,20 @@
     return { minutes: 0, goals_scored: 0, assists: 0, clean_sheets: 0, goals_conceded: 0, saves: 0, bonus: 0, bps: 0, total_points: 0 };
   }
 
+  /** Fixtures for a gameweek that hasn't started: the sample pairings with the away sides rotated. */
+  function futureFixtures(gw, teams) {
+    const id = (short) => teams.find((t) => t.short_name === short).id;
+    const shift = (gw - CURRENT) % FIXTURES.length;
+    const aways = FIXTURES.map((f) => f[1]);
+    const base = Date.now() + (gw - CURRENT) * 7 * 24 * 3600e3;
+    return FIXTURES.map((f, i) => ({
+      id: 9000 + gw * 10 + i, event: gw, team_h: id(f[0]), team_a: id(aways[(i + shift) % aways.length]),
+      kickoff_time: new Date(base + [0, 2.5, 2.5, 2.5, 2.5, 5, 29, 51, 53, 77][i] * 3600e3).toISOString(),
+      started: false, finished: false, finished_provisional: false, minutes: 0,
+      team_h_score: null, team_a_score: null, stats: [],
+    }));
+  }
+
   const DEMO_LEAGUES = { 1001: 'Sample League', 1002: 'Office League', 1003: 'Five-a-side Friends' };
 
   /** Answer API paths from the sample data, as the network source would. */
@@ -308,9 +322,9 @@
           };
         }
         let m = path.match(/^fixtures\/\?event=(\d+)/);
-        if (m) return week(m[1]).fixtures;
+        if (m) return +m[1] > CURRENT ? futureFixtures(+m[1], d.bootstrap.teams) : week(m[1]).fixtures;
         m = path.match(/^event\/(\d+)\/live/);
-        if (m) return week(m[1]).live;
+        if (m) return +m[1] > CURRENT ? { elements: [] } : week(m[1]).live;
         m = path.match(/^entry\/(\d+)\/event\/(\d+)\/picks/);
         if (m && d.picks[m[1]]) return week(m[2]).picks[m[1]];
         m = path.match(/^entry\/(\d+)\/history/);

@@ -74,7 +74,25 @@
 
 <main id="board" class="board" aria-live="polite"></main>
 
-<section id="matches" class="matches" aria-label="Matches this gameweek" hidden></section>
+<section id="matches" class="matches" aria-label="Matches by gameweek" hidden>
+  <div class="mt-head">
+    <div class="mt-title">
+      <h2>Matches</h2>
+      <div class="mt-nav">
+        <button type="button" class="icon-btn" id="mt-prev" aria-label="Earlier gameweek">‹</button>
+        <span class="mt-gw" id="mt-gw" aria-live="polite">GW –</span>
+        <button type="button" class="icon-btn" id="mt-next" aria-label="Later gameweek">›</button>
+        <button type="button" class="btn sm ghost" id="mt-now" hidden>This week</button>
+      </div>
+      <span class="mt-sub" id="mt-sub"></span>
+    </div>
+    <label class="field mt-for" for="mt-for">Club numbers for
+      <select id="mt-for"></select>
+      <span id="mt-for-name" class="mt-for-name"></span>
+    </label>
+  </div>
+  <div class="mt-track" id="mt-track" tabindex="0" role="region" aria-label="Matches by gameweek. Scroll sideways for other weeks."></div>
+</section>
 
 <details class="legend" id="legend">
   <summary>Key</summary>
@@ -87,7 +105,7 @@
     <li><b>C</b> / <b>V</b> captain, vice · <b>↑ ↓</b> automatic sub (projected until the gameweek ends)</li>
     <li>Projection and no-shows: a starter who didn't play, or has no minutes well into a live match, adds nothing more. Until the real auto-sub is settled, his slot is filled in the projection by the first bench player who fits, at FPL's expected points for him.</li>
     <li>Only players owned by: keeps players in the scoring line-up of up to (or exactly) that many managers in this league, and fades out everyone else. Up to 1 shows unique picks.</li>
-    <li>Matches: <b>+</b> shows goals, assists and cards. <b>++</b> adds every player's FPL points breakdown. Small figures beside a name are how many managers in this league have that player in their scoring line-up.</li>
+    <li>Matches: scroll sideways for past and coming weeks. The small number by a club is how many of that manager's footballers play for it (their picks that week; their present squad for coming weeks), and their players are highlighted in <b>+</b> and <b>++</b>. By default it follows the team shown above. <b>+</b> shows goals, assists and cards. <b>++</b> adds every player's FPL points breakdown. Small figures beside a name are how many managers in this league have that player in their scoring line-up.</li>
     <li>Compare: crossed-off players cancel out (both own them at the same multiplier). A coloured underline marks each side's edge.</li>
   </ul>
 </details>
